@@ -144,7 +144,7 @@ with tab_upload:
                 target_path.write_bytes(uploaded_file.getvalue())
                 st.success(
                     f"{uploaded_file.name}: сохранен как kitchen_bar_by_station.csv "
-                    "для секционного kitchen/bar parser."
+                    "для секционного kitchen/bar parser (в обход generic strict CSV loader)."
                 )
                 continue
 
