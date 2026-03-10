@@ -6,16 +6,30 @@ from typing import Any, Dict, Optional
 
 import pandas as pd
 
+BAR_SECTION_NAMES = ["Бар burger", "МЕСТО Бар"]
+BAR_SECTION_KEYS = {
+    "bar_burger": "Бар burger",
+    "mesto_bar": "МЕСТО Бар",
+}
+KITCHEN_SECTION_NAMES = ["Кухня burger", "СУШИ-М Кухня"]
+KITCHEN_WORKSHOP_SECTION_NAMES = [
+    "МЕСТО Гор. цех",
+    "МЕСТО Хол.цех",
+    "Место Гор. + Хол. цех",
+    "СУШИ-М Кухня",
+    "Кухня burger",
+]
+
 EXACT_SECTION_RULES = {
-    "бар burger": {"segment": "bar", "workshop": ""},
-    "место бар": {"segment": "bar", "workshop": ""},
-    "кухня burger": {"segment": "kitchen", "workshop": "Кухня burger"},
-    "суши-м кухня": {"segment": "kitchen", "workshop": "СУШИ-М Кухня"},
-    "место гор. цех": {"segment": "kitchen", "workshop": "МЕСТО Гор. цех"},
-    "место хол.цех": {"segment": "kitchen", "workshop": "МЕСТО Хол.цех"},
-    "место хол. цех": {"segment": "kitchen", "workshop": "МЕСТО Хол.цех"},
-    "место гор. + хол. цех": {"segment": "kitchen", "workshop": "Место Гор. + Хол. цех"},
-    "место гор.+хол. цех": {"segment": "kitchen", "workshop": "Место Гор. + Хол. цех"},
+    "бар burger": {"section_name": "Бар burger", "segment": "bar", "workshop": ""},
+    "место бар": {"section_name": "МЕСТО Бар", "segment": "bar", "workshop": ""},
+    "кухня burger": {"section_name": "Кухня burger", "segment": "kitchen", "workshop": "Кухня burger"},
+    "суши-м кухня": {"section_name": "СУШИ-М Кухня", "segment": "kitchen", "workshop": "СУШИ-М Кухня"},
+    "место гор. цех": {"section_name": "МЕСТО Гор. цех", "segment": "kitchen", "workshop": "МЕСТО Гор. цех"},
+    "место хол.цех": {"section_name": "МЕСТО Хол.цех", "segment": "kitchen", "workshop": "МЕСТО Хол.цех"},
+    "место хол. цех": {"section_name": "МЕСТО Хол.цех", "segment": "kitchen", "workshop": "МЕСТО Хол.цех"},
+    "место гор. + хол. цех": {"section_name": "Место Гор. + Хол. цех", "segment": "kitchen", "workshop": "Место Гор. + Хол. цех"},
+    "место гор.+хол. цех": {"section_name": "Место Гор. + Хол. цех", "segment": "kitchen", "workshop": "Место Гор. + Хол. цех"},
 }
 
 
@@ -112,9 +126,10 @@ def _parse_item_name(cell: str) -> str:
 
 def _find_explicit_section(cells: list[str]) -> Optional[str]:
     for cell in cells:
-        key = _normalize_section_key(cell)
-        if key in EXACT_SECTION_RULES:
-            return cell.strip()
+        norm_cell = _normalize_section_key(cell)
+        for key, rule in EXACT_SECTION_RULES.items():
+            if norm_cell == key or norm_cell.endswith(key):
+                return str(rule["section_name"])
     return None
 
 
@@ -214,12 +229,13 @@ def load_kitchen_bar_rows(base_dir: Path) -> Dict[str, Any]:
 
         revenue = paid if paid != 0 else amount
 
-        segment = _segment_from_section(current_section)
-        workshop_name = _normalize_workshop(current_section) if segment == "kitchen" else ""
+        canonical_section = _find_explicit_section([current_section]) or current_section
+        segment = _segment_from_section(canonical_section)
+        workshop_name = _normalize_workshop(canonical_section) if segment == "kitchen" else ""
 
         rows.append(
             {
-                "section_name": current_section,
+                "section_name": canonical_section,
                 "segment_type": segment,
                 "workshop_name": workshop_name,
                 "item": item_name,
@@ -250,8 +266,22 @@ def load_kitchen_bar_rows(base_dir: Path) -> Dict[str, Any]:
     return {"ok": True, "df": df, "source": str(src)}
 
 
-def aggregate_segment_metric(df: pd.DataFrame, segment: str, metric: str) -> Dict[str, Any]:
+def _filter_by_sections(df: pd.DataFrame, section_names: Optional[list[str]]) -> pd.DataFrame:
+    if not section_names:
+        return df
+    allowed = {_normalize_section_key(x) for x in section_names}
+    section_norm = df["section_name"].astype(str).map(_normalize_section_key)
+    return df[section_norm.isin(allowed)].copy()
+
+
+def aggregate_segment_metric(
+    df: pd.DataFrame,
+    segment: str,
+    metric: str,
+    section_names: Optional[list[str]] = None,
+) -> Dict[str, Any]:
     work = df[df["segment_type"] == segment].copy()
+    work = _filter_by_sections(work, section_names)
     if work.empty:
         return {"ok": False, "reason": "Нет данных для выбранного сегмента."}
 
@@ -269,8 +299,15 @@ def aggregate_segment_metric(df: pd.DataFrame, segment: str, metric: str) -> Dic
     }
 
 
-def top_items_by_segment(df: pd.DataFrame, segment: str, metric: str, limit: int = 5) -> Dict[str, Any]:
+def top_items_by_segment(
+    df: pd.DataFrame,
+    segment: str,
+    metric: str,
+    limit: int = 5,
+    section_names: Optional[list[str]] = None,
+) -> Dict[str, Any]:
     work = df[df["segment_type"] == segment].copy()
+    work = _filter_by_sections(work, section_names)
     if work.empty:
         return {"ok": False, "reason": "Нет данных для выбранного сегмента."}
 
@@ -285,8 +322,13 @@ def top_items_by_segment(df: pd.DataFrame, segment: str, metric: str, limit: int
     return {"ok": True, "table": grouped, "metric_col": metric_col}
 
 
-def abc_by_segment(df: pd.DataFrame, segment: str) -> Dict[str, Any]:
+def abc_by_segment(
+    df: pd.DataFrame,
+    segment: str,
+    section_names: Optional[list[str]] = None,
+) -> Dict[str, Any]:
     work = df[df["segment_type"] == segment].copy()
+    work = _filter_by_sections(work, section_names)
     if work.empty:
         return {"ok": False, "reason": "Нет данных для выбранного сегмента."}
 
@@ -321,8 +363,13 @@ def abc_by_segment(df: pd.DataFrame, segment: str) -> Dict[str, Any]:
     return {"ok": True, "table": grouped}
 
 
-def workshops_metric(df: pd.DataFrame, metric: str) -> Dict[str, Any]:
+def workshops_metric(
+    df: pd.DataFrame,
+    metric: str,
+    section_names: Optional[list[str]] = None,
+) -> Dict[str, Any]:
     work = df[df["segment_type"] == "kitchen"].copy()
+    work = _filter_by_sections(work, section_names)
     if work.empty:
         return {"ok": False, "reason": "Нет данных по кухне/цехам."}
 
@@ -336,8 +383,13 @@ def workshops_metric(df: pd.DataFrame, metric: str) -> Dict[str, Any]:
     return {"ok": True, "table": grouped, "metric_col": metric_col}
 
 
-def workshops_abc(df: pd.DataFrame, top_n: int = 3) -> Dict[str, Any]:
+def workshops_abc(
+    df: pd.DataFrame,
+    top_n: int = 3,
+    section_names: Optional[list[str]] = None,
+) -> Dict[str, Any]:
     work = df[df["segment_type"] == "kitchen"].copy()
+    work = _filter_by_sections(work, section_names)
     if work.empty:
         return {"ok": False, "reason": "Нет данных по кухне/цехам."}
 

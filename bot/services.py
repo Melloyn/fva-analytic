@@ -20,6 +20,10 @@ from backend.analytics.kitchen_bar_segments import (
     abc_by_segment,
     workshops_metric,
     workshops_abc,
+    BAR_SECTION_NAMES,
+    BAR_SECTION_KEYS,
+    KITCHEN_SECTION_NAMES,
+    KITCHEN_WORKSHOP_SECTION_NAMES,
 )
 from backend.utils.format import format_rub
 from backend.utils.normalize import normalize_number_series, normalize_col_name
@@ -506,7 +510,8 @@ def get_kitchen_segment_metric_text(segment: str, metric: str) -> str:
     if err:
         return f"🍳 {_segment_title(segment)}\n\n{err}"
 
-    result = aggregate_segment_metric(df, segment=segment, metric=metric)
+    section_names = BAR_SECTION_NAMES if segment == "bar" else KITCHEN_SECTION_NAMES
+    result = aggregate_segment_metric(df, segment=segment, metric=metric, section_names=section_names)
     if not result.get("ok"):
         return f"🍳 {_segment_title(segment)}\n\n{result.get('reason')}"
 
@@ -529,7 +534,8 @@ def get_kitchen_segment_top_text(segment: str, metric: str = "revenue", limit: i
     if err:
         return f"🍳 {_segment_title(segment)}\n\n{err}"
 
-    result = top_items_by_segment(df, segment=segment, metric=metric, limit=limit)
+    section_names = BAR_SECTION_NAMES if segment == "bar" else KITCHEN_SECTION_NAMES
+    result = top_items_by_segment(df, segment=segment, metric=metric, limit=limit, section_names=section_names)
     if not result.get("ok"):
         return f"🍳 {_segment_title(segment)}\n\n{result.get('reason')}"
 
@@ -548,7 +554,8 @@ def get_kitchen_segment_abc_text(segment: str) -> str:
     if err:
         return f"🍽 ABC — {_segment_title(segment)}\n\n{err}"
 
-    result = abc_by_segment(df, segment=segment)
+    section_names = BAR_SECTION_NAMES if segment == "bar" else KITCHEN_SECTION_NAMES
+    result = abc_by_segment(df, segment=segment, section_names=section_names)
     if not result.get("ok"):
         return f"🍽 ABC — {_segment_title(segment)}\n\n{result.get('reason')}"
 
@@ -573,7 +580,7 @@ def get_kitchen_workshops_metric_text(metric: str) -> str:
     if err:
         return f"🍳 Кухня по цехам\n\n{err}"
 
-    result = workshops_metric(df, metric=metric)
+    result = workshops_metric(df, metric=metric, section_names=KITCHEN_WORKSHOP_SECTION_NAMES)
     if not result.get("ok"):
         return f"🍳 Кухня по цехам\n\n{result.get('reason')}"
 
@@ -593,7 +600,7 @@ def get_kitchen_workshops_abc_text() -> str:
     if err:
         return f"🍽 ABC по цехам\n\n{err}"
 
-    result = workshops_abc(df)
+    result = workshops_abc(df, section_names=KITCHEN_WORKSHOP_SECTION_NAMES)
     if not result.get("ok"):
         return f"🍽 ABC по цехам\n\n{result.get('reason')}"
 
@@ -605,6 +612,111 @@ def get_kitchen_workshops_abc_text() -> str:
             lines.append(f"{i}. {clean_dish_name(row.item)} — {format_rub(float(row.revenue))}")
         lines.append("")
     return "\n".join(lines).strip()
+
+
+def get_bar_section_choices() -> list[tuple[str, str]]:
+    return [(key, label) for key, label in BAR_SECTION_KEYS.items()]
+
+
+def _bar_section_name_from_key(section_key: str) -> Optional[str]:
+    return BAR_SECTION_KEYS.get(section_key)
+
+
+def _exclude_hookah_items(table):
+    if table is None or table.empty or "item" not in table.columns:
+        return table
+    mask = table["item"].astype(str).str.lower().str.contains("кальян", na=False)
+    return table[~mask].copy()
+
+
+def get_bar_section_metric_text(section_key: str, metric: str) -> str:
+    section_name = _bar_section_name_from_key(section_key)
+    if not section_name:
+        return "🍳 Бар по барам\n\nНекорректный бар."
+    if metric not in {"revenue", "quantity"}:
+        return f"🍳 {section_name}\n\nНекорректная метрика."
+    df, err = _load_kitchen_segment_df()
+    if err:
+        return f"🍳 {section_name}\n\n{err}"
+    result = aggregate_segment_metric(
+        df,
+        segment="bar",
+        metric=metric,
+        section_names=[section_name],
+    )
+    if not result.get("ok"):
+        return f"🍳 {section_name}\n\n{result.get('reason')}"
+    value = float(result.get("value", 0.0))
+    positions = int(result.get("positions", 0))
+    metric_title = "Выручка" if metric == "revenue" else "Количество"
+    metric_value = format_rub(value) if metric == "revenue" else f"{int(value)} шт"
+    return "\n".join(
+        [
+            f"🍳 {section_name} — {metric_title}",
+            "",
+            f"{metric_title}: {metric_value}",
+            f"Позиций: {positions}",
+        ]
+    )
+
+
+def get_bar_section_top_text(section_key: str, limit: int = 5) -> str:
+    section_name = _bar_section_name_from_key(section_key)
+    if not section_name:
+        return "🍳 Бар по барам\n\nНекорректный бар."
+    df, err = _load_kitchen_segment_df()
+    if err:
+        return f"🍳 {section_name}\n\n{err}"
+    result = top_items_by_segment(
+        df,
+        segment="bar",
+        metric="revenue",
+        limit=limit,
+        section_names=[section_name],
+    )
+    if not result.get("ok"):
+        return f"🍳 {section_name}\n\n{result.get('reason')}"
+    table = result.get("table")
+    if table is None or table.empty:
+        return f"🍳 {section_name}\n\nНет данных по позициям."
+    metric_col = result.get("metric_col", "revenue")
+    lines = [f"🍳 {section_name} — Топ позиций", ""]
+    for i, row in enumerate(table.itertuples(index=False), 1):
+        value = float(getattr(row, metric_col))
+        lines.append(f"{i}. {clean_dish_name(getattr(row, 'item'))} — {format_rub(value)}")
+    return "\n".join(lines)
+
+
+def get_bar_section_abc_text(section_key: str) -> str:
+    section_name = _bar_section_name_from_key(section_key)
+    if not section_name:
+        return "🍽 ABC — Бар по барам\n\nНекорректный бар."
+    df, err = _load_kitchen_segment_df()
+    if err:
+        return f"🍽 ABC — {section_name}\n\n{err}"
+    result = abc_by_segment(df, segment="bar", section_names=[section_name])
+    if not result.get("ok"):
+        return f"🍽 ABC — {section_name}\n\n{result.get('reason')}"
+    table = result.get("table")
+    if table is None or table.empty:
+        return f"🍽 ABC — {section_name}\n\nНет данных для ABC."
+    # Явный бизнес-фильтр для ABC конкретного бара.
+    table = _exclude_hookah_items(table)
+    if table.empty:
+        return f"🍽 ABC — {section_name}\n\nПосле исключения кальянов нет данных."
+    counts = table["abc"].value_counts().to_dict()
+    lines = [
+        f"🍽 ABC — {section_name}",
+        "",
+        f"A: {counts.get('A', 0)}",
+        f"B: {counts.get('B', 0)}",
+        f"C: {counts.get('C', 0)}",
+        "",
+        "Топ-5 по выручке:",
+    ]
+    for i, row in enumerate(table.head(5).itertuples(index=False), 1):
+        lines.append(f"{i}. {clean_dish_name(row.item)} — {format_rub(float(row.revenue))}")
+    return "\n".join(lines)
 
 def get_help_text() -> str:
     return (
