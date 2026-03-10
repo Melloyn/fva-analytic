@@ -5,6 +5,7 @@ def main_menu_reply_keyboard() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="📊 Сегодня"), KeyboardButton(text="🧾 Средний чек")],
             [KeyboardButton(text="🏃 Официанты"), KeyboardButton(text="🍽 ABC меню")],
+            [KeyboardButton(text="🗓 Отчет за период"), KeyboardButton(text="📅 Выручка по дням недели")],
             [KeyboardButton(text="🍳 Кухня / бар"), KeyboardButton(text="ℹ️ Помощь")],
         ],
         resize_keyboard=True,

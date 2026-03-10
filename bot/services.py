@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -8,6 +9,7 @@ import pandas as pd
 
 from backend.ingestion.loader import load_file, detect_report_type, build_mapping, prepare_kpi_df
 from backend.analytics.metrics import calculate_waiters_metrics, calculate_food_usage_metrics
+from backend.analytics.bot_metrics import calculate_revenue_by_weekday_for_month
 from backend.utils.format import format_rub
 from backend.utils.normalize import normalize_number_series, normalize_col_name
 from bot.formatters import clean_dish_name, format_percent_change
@@ -16,6 +18,15 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 PROCESSED_DIR = BASE_DIR / "data" / "processed"
 
 NO_DATA_MESSAGE = "Нет подготовленных данных.\nЗагрузите отчёты через приложение."
+WEEKDAY_RU = {
+    0: "Понедельник",
+    1: "Вторник",
+    2: "Среда",
+    3: "Четверг",
+    4: "Пятница",
+    5: "Суббота",
+    6: "Воскресенье",
+}
 
 class MockFile:
     def __init__(self, path: Path):
@@ -47,6 +58,49 @@ def _get_kpi_df(target_type: str) -> Optional[pd.DataFrame]:
             return df_kpi
             
     return None
+
+
+def _parse_ru_date(value: str) -> Optional[datetime]:
+    try:
+        return datetime.strptime(value.strip(), "%d.%m.%Y")
+    except Exception:
+        return None
+
+
+def _parse_month(value: str) -> Optional[tuple[int, int]]:
+    try:
+        dt = datetime.strptime(value.strip(), "%Y-%m")
+        return dt.year, dt.month
+    except Exception:
+        return None
+
+
+def _calculate_period_summary(df_kpi: pd.DataFrame) -> dict:
+    if "revenue" not in df_kpi.columns:
+        return {"ok": False, "reason": "Недостаточно данных: не найдена колонка revenue."}
+
+    work = df_kpi.copy()
+    work["revenue"] = normalize_number_series(work["revenue"])
+    total_revenue = float(work["revenue"].sum())
+
+    checks_count = 0
+    checks_source = "none"
+    if "check_id" in work.columns:
+        checks_count = int(work["check_id"].nunique(dropna=True))
+        checks_source = "check_id_nunique"
+    elif "waiter" in work.columns:
+        # Fallback only for waiter-like datasets where row ~= check.
+        checks_count = int(len(work))
+        checks_source = "row_count_fallback"
+
+    avg_check = total_revenue / checks_count if checks_count > 0 else 0.0
+    return {
+        "ok": True,
+        "total_revenue": total_revenue,
+        "checks_count": checks_count,
+        "avg_check": avg_check,
+        "checks_source": checks_source,
+    }
 
 def get_revenue_report_text(days: int = 1) -> str:
     df_kpi = _get_kpi_df("waiters")
@@ -105,6 +159,80 @@ def get_revenue_report_text(days: int = 1) -> str:
             lines.append("")
             lines.append(f"Изменение к вчера: {format_percent_change(delta_pct)}")
             
+    return "\n".join(lines)
+
+
+def get_revenue_report_by_date_range_text(date_from: str, date_to: str) -> str:
+    from_dt = _parse_ru_date(date_from)
+    to_dt = _parse_ru_date(date_to)
+    if from_dt is None or to_dt is None:
+        return (
+            "Некорректный формат даты.\n"
+            "Используйте формат ДД.ММ.ГГГГ, например 01.03.2026."
+        )
+    if to_dt < from_dt:
+        return "Дата окончания не может быть раньше даты начала."
+
+    df_kpi = _get_kpi_df("waiters")
+    if df_kpi is None:
+        df_kpi = _get_kpi_df("revenue_by_day")
+    if df_kpi is None:
+        return NO_DATA_MESSAGE
+    if "date" not in df_kpi.columns:
+        fallback = _get_kpi_df("revenue_by_day")
+        if fallback is not None and "date" in fallback.columns:
+            df_kpi = fallback
+        else:
+            return "В текущем наборе нет колонки date. Фильтрация по датам недоступна."
+
+    dates = pd.to_datetime(df_kpi["date"], errors="coerce", dayfirst=True)
+    mask = (dates.dt.date >= from_dt.date()) & (dates.dt.date <= to_dt.date())
+    period_df = df_kpi[mask].copy()
+    if period_df.empty:
+        return "Нет данных за выбранный период."
+
+    metrics = _calculate_period_summary(period_df)
+    if not metrics.get("ok"):
+        return f"Ошибка расчетов: {metrics.get('reason')}"
+
+    total_rev = metrics.get("total_revenue", 0.0)
+    checks_count = metrics.get("checks_count", 0)
+    avg_check = metrics.get("avg_check", 0.0)
+    checks_source = metrics.get("checks_source", "none")
+
+    checks_text = str(checks_count) if checks_source != "none" else "н/д"
+    avg_check_text = format_rub(avg_check) if checks_source != "none" else "н/д"
+
+    return "\n".join(
+        [
+            f"🗓 Отчет за период {from_dt.strftime('%d.%m.%Y')} — {to_dt.strftime('%d.%m.%Y')}",
+            "",
+            f"Выручка: {format_rub(total_rev)}",
+            f"Чеков: {checks_text}",
+            f"Средний чек: {avg_check_text}",
+        ]
+    )
+
+
+def get_revenue_by_weekday_month_text(month_text: str) -> str:
+    parsed = _parse_month(month_text)
+    if not parsed:
+        return "Некорректный формат месяца. Используйте ГГГГ-ММ, например 2026-03."
+
+    year, month = parsed
+    df_kpi = _get_kpi_df("revenue_by_day")
+    if df_kpi is None:
+        df_kpi = _get_kpi_df("waiters")
+    if df_kpi is None:
+        return NO_DATA_MESSAGE
+
+    metrics = calculate_revenue_by_weekday_for_month(df_kpi, year=year, month=month)
+    if not metrics.get("ok"):
+        return f"Ошибка расчетов: {metrics.get('reason')}"
+
+    lines = [f"📅 Выручка по дням недели за {year}-{month:02d}", ""]
+    for idx, value in metrics.get("weekday_revenue", []):
+        lines.append(f"{WEEKDAY_RU.get(int(idx), str(idx))} — {format_rub(float(value))}")
     return "\n".join(lines)
 
 def get_avg_check_text() -> str:
@@ -322,6 +450,8 @@ def get_help_text() -> str:
         "ℹ️ Помощь\n\n"
         "Доступные разделы:\n"
         "📊 Сегодня — краткая сводка\n"
+        "🗓 Отчет за период — сводка за выбранные даты\n"
+        "📅 Выручка по дням недели — разрез по выбранному месяцу\n"
         "🧾 Средний чек — текущая динамика\n"
         "🏃 Официанты — топ по выручке\n"
         "🍽 ABC меню — анализ меню\n"
