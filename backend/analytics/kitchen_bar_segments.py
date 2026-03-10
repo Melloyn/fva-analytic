@@ -6,6 +6,18 @@ from typing import Any, Dict, Optional
 
 import pandas as pd
 
+EXACT_SECTION_RULES = {
+    "бар burger": {"segment": "bar", "workshop": ""},
+    "место бар": {"segment": "bar", "workshop": ""},
+    "кухня burger": {"segment": "kitchen", "workshop": "Кухня burger"},
+    "суши-м кухня": {"segment": "kitchen", "workshop": "СУШИ-М Кухня"},
+    "место гор. цех": {"segment": "kitchen", "workshop": "МЕСТО Гор. цех"},
+    "место хол.цех": {"segment": "kitchen", "workshop": "МЕСТО Хол.цех"},
+    "место хол. цех": {"segment": "kitchen", "workshop": "МЕСТО Хол.цех"},
+    "место гор. + хол. цех": {"segment": "kitchen", "workshop": "Место Гор. + Хол. цех"},
+    "место гор.+хол. цех": {"segment": "kitchen", "workshop": "Место Гор. + Хол. цех"},
+}
+
 
 def _decode_bytes(raw: bytes) -> str:
     for enc in ("utf-8-sig", "cp1251", "utf-8", "latin1"):
@@ -42,7 +54,17 @@ def _is_section_header(text: str) -> bool:
     return any(x in t for x in ["бар", "кух", "цех", "место", "суши"])
 
 
+def _normalize_section_key(section: str) -> str:
+    return re.sub(r"\s+", " ", section.strip().lower())
+
+
 def _segment_from_section(section: str) -> str:
+    key = _normalize_section_key(section)
+    exact = EXACT_SECTION_RULES.get(key)
+    if exact:
+        return str(exact["segment"])
+
+    # Secondary conservative fallback for sections outside fixed mapping.
     s = section.lower()
     if "бар" in s and "кух" not in s:
         return "bar"
@@ -57,6 +79,12 @@ def _segment_from_section(section: str) -> str:
 
 
 def _normalize_workshop(section: str) -> str:
+    key = _normalize_section_key(section)
+    exact = EXACT_SECTION_RULES.get(key)
+    if exact:
+        return str(exact["workshop"])
+
+    # Secondary fallback for unknown kitchen sections.
     s = section.strip()
     low = s.lower()
     if "гор" in low and "цех" in low:
