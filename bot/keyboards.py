@@ -126,6 +126,55 @@ def date_picker_day_kb(year: int, month: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def kitchen_bar_segment_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Бар", callback_data="kbar:seg:bar")],
+            [InlineKeyboardButton(text="Кухня", callback_data="kbar:seg:kitchen")],
+            [InlineKeyboardButton(text="Кухня по цехам", callback_data="kbar:seg:workshops")],
+            [InlineKeyboardButton(text="Назад", callback_data="action:back")],
+        ]
+    )
+
+
+def kitchen_bar_metric_kb(segment: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Выручка", callback_data=f"kbar:metric:{segment}:revenue"),
+                InlineKeyboardButton(text="Количество", callback_data=f"kbar:metric:{segment}:quantity"),
+            ],
+            [
+                InlineKeyboardButton(text="Топ позиций", callback_data=f"kbar:metric:{segment}:top"),
+                InlineKeyboardButton(text="ABC", callback_data=f"kbar:metric:{segment}:abc"),
+            ],
+            [InlineKeyboardButton(text="Назад", callback_data="kbar:back:seg")],
+        ]
+    )
+
+
+def kitchen_workshops_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Выручка по цехам", callback_data="kbar:workshops:revenue")],
+            [InlineKeyboardButton(text="Количество по цехам", callback_data="kbar:workshops:quantity")],
+            [InlineKeyboardButton(text="ABC по цехам", callback_data="kbar:workshops:abc")],
+            [InlineKeyboardButton(text="Назад", callback_data="kbar:back:seg")],
+        ]
+    )
+
+
+def abc_segment_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Бар", callback_data="abcseg:bar")],
+            [InlineKeyboardButton(text="Кухня", callback_data="abcseg:kitchen")],
+            [InlineKeyboardButton(text="Кухня по цехам", callback_data="abcseg:workshops")],
+            [InlineKeyboardButton(text="Назад", callback_data="action:back")],
+        ]
+    )
+
+
 def today_inline_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[

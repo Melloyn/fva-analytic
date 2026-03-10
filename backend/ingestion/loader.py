@@ -1044,3 +1044,9 @@ def load_file(uploaded_file) -> Tuple[Optional[pd.DataFrame], Dict, Optional[str
         return parse_csv_bytes(uploaded_file.getvalue())
 
     return None, {"attempts": []}, "Поддерживаются только CSV и XLSX."
+
+
+def is_kitchen_bar_section_report_filename(file_name: str) -> bool:
+    name = (file_name or "").strip().lower()
+    base_name = name.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    return base_name == "kitchen_bar_by_station.csv"

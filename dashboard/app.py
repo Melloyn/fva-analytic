@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pandas as pd
 import streamlit as st
 
@@ -9,6 +11,7 @@ from backend.analytics.reports import (
 from backend.ingestion.loader import (
     build_mapping,
     detect_report_type,
+    is_kitchen_bar_section_report_filename,
     load_file,
     prepare_kpi_df,
 )
@@ -134,6 +137,17 @@ with tab_upload:
         batch_types = {}
 
         for uploaded_file in uploaded_files:
+            if is_kitchen_bar_section_report_filename(uploaded_file.name):
+                processed_dir = Path(__file__).resolve().parents[1] / "data" / "processed"
+                processed_dir.mkdir(parents=True, exist_ok=True)
+                target_path = processed_dir / "kitchen_bar_by_station.csv"
+                target_path.write_bytes(uploaded_file.getvalue())
+                st.success(
+                    f"{uploaded_file.name}: сохранен как kitchen_bar_by_station.csv "
+                    "для секционного kitchen/bar parser (в обход generic strict CSV loader)."
+                )
+                continue
+
             parsed_df, parse_info, load_error = load_file(uploaded_file)
             if load_error or parsed_df is None:
                 st.error(f"{uploaded_file.name}: {load_error or 'Не удалось загрузить файл.'}")

@@ -19,6 +19,10 @@ from bot.keyboards import (
     date_picker_month_kb,
     date_picker_day_kb,
     MONTHS_RU_SHORT,
+    kitchen_bar_segment_kb,
+    kitchen_bar_metric_kb,
+    kitchen_workshops_kb,
+    abc_segment_kb,
 )
 from bot.services import (
     get_revenue_report_text,
@@ -28,7 +32,11 @@ from bot.services import (
     get_avg_check_text,
     get_waiters_text,
     get_abc_menu_text,
-    get_kitchen_bar_text,
+    get_kitchen_segment_metric_text,
+    get_kitchen_segment_top_text,
+    get_kitchen_segment_abc_text,
+    get_kitchen_workshops_metric_text,
+    get_kitchen_workshops_abc_text,
     get_help_text,
 )
 
@@ -112,14 +120,12 @@ async def msg_waiters(message: Message):
 
 @router.message(F.text == "🍽 ABC меню")
 async def msg_abc(message: Message):
-    text = get_abc_menu_text(sort_by="revenue")
-    await message.answer(text, reply_markup=abc_inline_kb())
+    await message.answer("Выберите сегмент для ABC:", reply_markup=abc_segment_kb())
 
 
 @router.message(F.text == "🍳 Кухня / бар")
 async def msg_kitchen_bar(message: Message):
-    text = get_kitchen_bar_text()
-    await message.answer(text, reply_markup=back_inline_kb())
+    await message.answer("Выберите сегмент кухни/бара:", reply_markup=kitchen_bar_segment_kb())
 
 
 @router.message(F.text == "ℹ️ Помощь")
@@ -321,6 +327,71 @@ async def cb_daterange_flow(callback: CallbackQuery, state: FSMContext):
 
     await state.update_data(dr_phase=phase, dr_step=step, dr_year=year, dr_month=month)
     await _render_daterange_picker(callback, state)
+    await callback.answer()
+
+
+# ====================
+# Kitchen/Bar segmented flow
+# ====================
+
+@router.callback_query(F.data.startswith("kbar:"))
+async def cb_kitchen_bar_flow(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+
+    if action == "seg":
+        seg = parts[2]
+        if seg == "workshops":
+            await callback.message.edit_text("Кухня по цехам:", reply_markup=kitchen_workshops_kb())
+        else:
+            title = "Бар" if seg == "bar" else "Кухня"
+            await callback.message.edit_text(f"{title}: выберите метрику", reply_markup=kitchen_bar_metric_kb(seg))
+        await callback.answer()
+        return
+
+    if action == "metric":
+        seg = parts[2]
+        metric = parts[3]
+        if metric == "top":
+            text = get_kitchen_segment_top_text(seg, metric="revenue")
+        elif metric == "abc":
+            text = get_kitchen_segment_abc_text(seg)
+        else:
+            text = get_kitchen_segment_metric_text(seg, metric=metric)
+        await callback.message.edit_text(text, reply_markup=back_inline_kb())
+        await callback.answer()
+        return
+
+    if action == "workshops":
+        metric = parts[2]
+        if metric == "abc":
+            text = get_kitchen_workshops_abc_text()
+        else:
+            text = get_kitchen_workshops_metric_text(metric=metric)
+        await callback.message.edit_text(text, reply_markup=back_inline_kb())
+        await callback.answer()
+        return
+
+    if action == "back":
+        await callback.message.edit_text("Выберите сегмент кухни/бара:", reply_markup=kitchen_bar_segment_kb())
+        await callback.answer()
+        return
+
+    await callback.answer()
+
+
+# ====================
+# ABC segmented flow
+# ====================
+
+@router.callback_query(F.data.startswith("abcseg:"))
+async def cb_abc_segment_flow(callback: CallbackQuery):
+    _, seg = callback.data.split(":", 1)
+    if seg == "workshops":
+        text = get_kitchen_workshops_abc_text()
+    else:
+        text = get_kitchen_segment_abc_text(seg)
+    await callback.message.edit_text(text, reply_markup=back_inline_kb())
     await callback.answer()
 
 
