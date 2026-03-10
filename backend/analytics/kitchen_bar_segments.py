@@ -106,6 +106,30 @@ def _parse_item_name(cell: str) -> str:
     return m.group(1).strip() if m else text
 
 
+def _find_explicit_section(cells: list[str]) -> Optional[str]:
+    for cell in cells:
+        key = _normalize_section_key(cell)
+        if key in EXACT_SECTION_RULES:
+            return cell.strip()
+    return None
+
+
+def _extract_item_name(non_empty_cells: list[str]) -> str:
+    # Prefer the first non-numeric business text token to avoid treating raw code as item.
+    for cell in non_empty_cells:
+        norm = _normalize_section_key(cell)
+        if norm in EXACT_SECTION_RULES:
+            continue
+        if any(x in norm for x in ["код", "блюдо", "кол-во", "сумма", "оплачено", "итого"]):
+            continue
+        if _is_numeric_like(cell):
+            continue
+        name = _parse_item_name(cell)
+        if name and not _is_numeric_like(name):
+            return name
+    return _parse_item_name(non_empty_cells[0]) if non_empty_cells else ""
+
+
 def load_kitchen_bar_rows(base_dir: Path) -> Dict[str, Any]:
     candidates = [
         base_dir / "data" / "processed" / "kitchen_bar_by_station.csv",
@@ -134,6 +158,12 @@ def load_kitchen_bar_rows(base_dir: Path) -> Dict[str, Any]:
         if not non_empty:
             continue
 
+        explicit_section = _find_explicit_section(non_empty)
+        if explicit_section:
+            current_section = explicit_section
+            section_headers_found += 1
+            continue
+
         first = non_empty[0]
         low_first = first.lower()
 
@@ -152,14 +182,32 @@ def load_kitchen_bar_rows(base_dir: Path) -> Dict[str, Any]:
         if not nums:
             continue
 
-        item_name = _parse_item_name(first)
+        item_name = _extract_item_name(non_empty)
         if not item_name:
             continue
 
-        quantity = float(nums[0]) if len(nums) >= 1 else 0.0
-        amount = float(nums[1]) if len(nums) >= 2 else 0.0
-        discount = float(nums[2]) if len(nums) >= 3 else 0.0
-        paid = float(nums[-1]) if len(nums) >= 2 else amount
+        # Parse numeric metrics from the tail to avoid code/index numbers at row start.
+        if len(nums) >= 4:
+            quantity = float(nums[-4])
+            amount = float(nums[-3])
+            discount = float(nums[-2])
+            paid = float(nums[-1])
+        elif len(nums) == 3:
+            quantity = float(nums[-3])
+            amount = float(nums[-2])
+            discount = 0.0
+            paid = float(nums[-1])
+        elif len(nums) == 2:
+            quantity = float(nums[-2])
+            amount = float(nums[-1])
+            discount = 0.0
+            paid = amount
+        else:
+            quantity = float(nums[-1])
+            amount = 0.0
+            discount = 0.0
+            paid = 0.0
+
         revenue = paid if paid != 0 else amount
 
         segment = _segment_from_section(current_section)
@@ -237,6 +285,13 @@ def abc_by_segment(df: pd.DataFrame, segment: str) -> Dict[str, Any]:
     work = df[df["segment_type"] == segment].copy()
     if work.empty:
         return {"ok": False, "reason": "Нет данных для выбранного сегмента."}
+
+    if segment == "bar":
+        # Explicit exclusion rule requested by product: hookah items must not affect bar ABC.
+        mask_hookah = work["item"].astype(str).str.lower().str.contains("кальян", na=False)
+        work = work[~mask_hookah].copy()
+        if work.empty:
+            return {"ok": False, "reason": "После исключения кальянов нет данных для ABC — Бар."}
 
     grouped = (
         work.groupby("item", dropna=False)["revenue"]
