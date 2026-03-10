@@ -13,6 +13,14 @@ from backend.analytics.bot_metrics import (
     calculate_revenue_by_weekday_for_month,
     calculate_revenue_for_weekday_in_month,
 )
+from backend.analytics.kitchen_bar_segments import (
+    load_kitchen_bar_rows,
+    aggregate_segment_metric,
+    top_items_by_segment,
+    abc_by_segment,
+    workshops_metric,
+    workshops_abc,
+)
 from backend.utils.format import format_rub
 from backend.utils.normalize import normalize_number_series, normalize_col_name
 from bot.formatters import clean_dish_name, format_percent_change
@@ -480,6 +488,123 @@ def get_kitchen_bar_text() -> str:
             lines.append(f"{i}. {name} — {int(value)} шт")
             
     return "\n".join(lines)
+
+
+def _segment_title(segment: str) -> str:
+    return {"bar": "Бар", "kitchen": "Кухня"}.get(segment, segment)
+
+
+def _load_kitchen_segment_df():
+    payload = load_kitchen_bar_rows(BASE_DIR)
+    if not payload.get("ok"):
+        return None, payload.get("reason", "Ошибка загрузки kitchen/bar отчета.")
+    return payload.get("df"), None
+
+
+def get_kitchen_segment_metric_text(segment: str, metric: str) -> str:
+    df, err = _load_kitchen_segment_df()
+    if err:
+        return f"🍳 {_segment_title(segment)}\n\n{err}"
+
+    result = aggregate_segment_metric(df, segment=segment, metric=metric)
+    if not result.get("ok"):
+        return f"🍳 {_segment_title(segment)}\n\n{result.get('reason')}"
+
+    value = float(result.get("value", 0.0))
+    positions = int(result.get("positions", 0))
+    metric_title = "Выручка" if metric == "revenue" else "Количество"
+    metric_value = format_rub(value) if metric == "revenue" else f"{int(value)} шт"
+    return "\n".join(
+        [
+            f"🍳 {_segment_title(segment)} — {metric_title}",
+            "",
+            f"{metric_title}: {metric_value}",
+            f"Позиций: {positions}",
+        ]
+    )
+
+
+def get_kitchen_segment_top_text(segment: str, metric: str = "revenue", limit: int = 5) -> str:
+    df, err = _load_kitchen_segment_df()
+    if err:
+        return f"🍳 {_segment_title(segment)}\n\n{err}"
+
+    result = top_items_by_segment(df, segment=segment, metric=metric, limit=limit)
+    if not result.get("ok"):
+        return f"🍳 {_segment_title(segment)}\n\n{result.get('reason')}"
+
+    table = result.get("table")
+    metric_col = result.get("metric_col", metric)
+    lines = [f"🍳 {_segment_title(segment)} — Топ позиций", ""]
+    for i, row in enumerate(table.itertuples(index=False), 1):
+        value = float(getattr(row, metric_col))
+        val_text = format_rub(value) if metric_col == "revenue" else f"{int(value)} шт"
+        lines.append(f"{i}. {clean_dish_name(getattr(row, 'item'))} — {val_text}")
+    return "\n".join(lines)
+
+
+def get_kitchen_segment_abc_text(segment: str) -> str:
+    df, err = _load_kitchen_segment_df()
+    if err:
+        return f"🍽 ABC — {_segment_title(segment)}\n\n{err}"
+
+    result = abc_by_segment(df, segment=segment)
+    if not result.get("ok"):
+        return f"🍽 ABC — {_segment_title(segment)}\n\n{result.get('reason')}"
+
+    table = result.get("table")
+    counts = table["abc"].value_counts().to_dict()
+    lines = [
+        f"🍽 ABC — {_segment_title(segment)}",
+        "",
+        f"A: {counts.get('A', 0)}",
+        f"B: {counts.get('B', 0)}",
+        f"C: {counts.get('C', 0)}",
+        "",
+        "Топ-5 по выручке:",
+    ]
+    for i, row in enumerate(table.head(5).itertuples(index=False), 1):
+        lines.append(f"{i}. {clean_dish_name(row.item)} — {format_rub(float(row.revenue))}")
+    return "\n".join(lines)
+
+
+def get_kitchen_workshops_metric_text(metric: str) -> str:
+    df, err = _load_kitchen_segment_df()
+    if err:
+        return f"🍳 Кухня по цехам\n\n{err}"
+
+    result = workshops_metric(df, metric=metric)
+    if not result.get("ok"):
+        return f"🍳 Кухня по цехам\n\n{result.get('reason')}"
+
+    table = result.get("table")
+    metric_col = result.get("metric_col", metric)
+    title = "Выручка по цехам" if metric == "revenue" else "Количество по цехам"
+    lines = [f"🍳 {title}", ""]
+    for row in table.itertuples(index=False):
+        value = float(getattr(row, metric_col))
+        text = format_rub(value) if metric_col == "revenue" else f"{int(value)} шт"
+        lines.append(f"{getattr(row, 'workshop_name')} — {text}")
+    return "\n".join(lines)
+
+
+def get_kitchen_workshops_abc_text() -> str:
+    df, err = _load_kitchen_segment_df()
+    if err:
+        return f"🍽 ABC по цехам\n\n{err}"
+
+    result = workshops_abc(df)
+    if not result.get("ok"):
+        return f"🍽 ABC по цехам\n\n{result.get('reason')}"
+
+    lines = ["🍽 ABC по цехам", ""]
+    for block in result.get("blocks", []):
+        lines.append(f"{block['workshop']}:")
+        top = block.get("top")
+        for i, row in enumerate(top.itertuples(index=False), 1):
+            lines.append(f"{i}. {clean_dish_name(row.item)} — {format_rub(float(row.revenue))}")
+        lines.append("")
+    return "\n".join(lines).strip()
 
 def get_help_text() -> str:
     return (
