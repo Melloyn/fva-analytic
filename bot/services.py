@@ -9,7 +9,10 @@ import pandas as pd
 
 from backend.ingestion.loader import load_file, detect_report_type, build_mapping, prepare_kpi_df
 from backend.analytics.metrics import calculate_waiters_metrics, calculate_food_usage_metrics
-from backend.analytics.bot_metrics import calculate_revenue_by_weekday_for_month
+from backend.analytics.bot_metrics import (
+    calculate_revenue_by_weekday_for_month,
+    calculate_revenue_for_weekday_in_month,
+)
 from backend.utils.format import format_rub
 from backend.utils.normalize import normalize_number_series, normalize_col_name
 from bot.formatters import clean_dish_name, format_percent_change
@@ -234,6 +237,39 @@ def get_revenue_by_weekday_month_text(month_text: str) -> str:
     for idx, value in metrics.get("weekday_revenue", []):
         lines.append(f"{WEEKDAY_RU.get(int(idx), str(idx))} — {format_rub(float(value))}")
     return "\n".join(lines)
+
+
+def get_revenue_by_weekday_month_day_text(month_text: str, weekday_idx: int) -> str:
+    parsed = _parse_month(month_text)
+    if not parsed:
+        return "Некорректный формат месяца."
+    if weekday_idx not in WEEKDAY_RU:
+        return "Некорректный день недели."
+
+    year, month = parsed
+    df_kpi = _get_kpi_df("revenue_by_day")
+    if df_kpi is None:
+        df_kpi = _get_kpi_df("waiters")
+    if df_kpi is None:
+        return NO_DATA_MESSAGE
+
+    metrics = calculate_revenue_for_weekday_in_month(
+        df_kpi=df_kpi,
+        year=year,
+        month=month,
+        weekday_idx=weekday_idx,
+    )
+    if not metrics.get("ok"):
+        return f"Ошибка расчетов: {metrics.get('reason')}"
+
+    weekday_name = WEEKDAY_RU[weekday_idx]
+    return "\n".join(
+        [
+            f"📅 Выручка за {year}-{month:02d}",
+            "",
+            f"{weekday_name}: {format_rub(float(metrics.get('revenue', 0.0)))}",
+        ]
+    )
 
 def get_avg_check_text() -> str:
     df_kpi = _get_kpi_df("waiters")

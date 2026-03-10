@@ -32,3 +32,25 @@ def calculate_revenue_by_weekday_for_month(df_kpi: pd.DataFrame, year: int, mont
         ordered.append((idx, float(weekday_series.get(idx, 0.0))))
 
     return {"ok": True, "weekday_revenue": ordered}
+
+
+def calculate_revenue_for_weekday_in_month(
+    df_kpi: pd.DataFrame,
+    year: int,
+    month: int,
+    weekday_idx: int,
+) -> Dict[str, Any]:
+    if weekday_idx < 0 or weekday_idx > 6:
+        return {"ok": False, "reason": "Некорректный индекс дня недели: ожидается значение от 0 до 6."}
+
+    base = calculate_revenue_by_weekday_for_month(df_kpi=df_kpi, year=year, month=month)
+    if not base.get("ok"):
+        return base
+
+    day_value = 0.0
+    for idx, value in base.get("weekday_revenue", []):
+        if int(idx) == weekday_idx:
+            day_value = float(value)
+            break
+
+    return {"ok": True, "weekday_idx": weekday_idx, "revenue": day_value}
