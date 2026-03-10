@@ -41,6 +41,10 @@ def _to_float(value: str) -> Optional[float]:
         return None
 
 
+def _is_numeric_like(value: str) -> bool:
+    return _to_float(value) is not None
+
+
 def _is_section_header(text: str) -> bool:
     if not text:
         return False
