@@ -187,38 +187,124 @@ def reconstruct_revenue_by_day_layout(df: pd.DataFrame) -> Tuple[Optional[pd.Dat
     cols = ["Дата", "Код", "Касса Место", "Станция", "Итого"]
     out_rows: List[Dict[str, Any]] = []
     invalid_rows = 0
+    cashbox_from_header_count = 0
+    station_from_dynamic_count = 0
+
+    raw_cols = list(df.columns)
+    norm_cols = [normalize_col_name(c) for c in raw_cols]
+
+    def find_col_idx(candidates: List[str]) -> Optional[int]:
+        for needle in candidates:
+            n = normalize_col_name(needle)
+            for i, c in enumerate(norm_cols):
+                if c == n:
+                    return i
+            for i, c in enumerate(norm_cols):
+                if n in c:
+                    return i
+        return None
+
+    date_idx = find_col_idx(["дата", "date"])
+    code_idx = find_col_idx(["код", "code"])
+    cashbox_idx = find_col_idx(["касса место", "касса", "cashbox"])
+    total_idx = find_col_idx(["итого", "total"])
+
+    core_names = {"дата", "код", "валюта", "касса место", "итого", "date", "code", "currency", "cashbox", "total"}
+    station_header_idx = None
+    for i, c in enumerate(norm_cols):
+        if c.startswith("unnamed:") or c == "":
+            continue
+        if c in core_names:
+            continue
+        if any(x in c for x in ["отчет", "наименование", "дата:", "выручка станций"]):
+            continue
+        station_header_idx = i
+        break
+
+    def first_non_empty(row_vals: List[str], indices: List[int], used: set) -> Tuple[str, Optional[int]]:
+        for idx in indices:
+            if idx < 0 or idx >= len(row_vals) or idx in used:
+                continue
+            val = _clean_cell(row_vals[idx])
+            if val:
+                return val, idx
+        return "", None
+
+    def first_numeric(row_vals: List[str], indices: List[int], used: set) -> Tuple[str, Optional[int]]:
+        for idx in indices:
+            if idx < 0 or idx >= len(row_vals) or idx in used:
+                continue
+            val = _clean_cell(row_vals[idx])
+            if _is_numeric_like(val):
+                return val, idx
+        return "", None
 
     for _, row in df.iterrows():
-        vals = _non_empty_tokens_from_row(row)
+        row_vals = [_clean_cell(v) for v in row.tolist()]
+        vals = [v for v in row_vals if v and v.lower() not in {"nan", "none", "<na>"}]
         if not vals:
             continue
         if "итого" in normalize_text(vals[0]) or "выручка станций по дням" in normalize_text(vals[0]):
             continue
-        if len(vals) < 4:
-            invalid_rows += 1
-            continue
-        if not _is_date_like(vals[0]):
+
+        used_positions: set = set()
+
+        date_candidates = []
+        if date_idx is not None:
+            date_candidates.extend([date_idx, date_idx + 1, date_idx - 1])
+        date_candidates.extend([0, 1, 2])
+        date_val, date_pos = first_non_empty(row_vals, date_candidates, used_positions)
+        if date_pos is not None:
+            used_positions.add(date_pos)
+        if not _is_date_like(date_val):
             invalid_rows += 1
             continue
 
-        date_val = vals[0]
-        code_val = vals[1]
-        money_part = vals[2:]
-        if len(money_part) < 2:
+        code_candidates = []
+        if code_idx is not None:
+            code_candidates.extend([code_idx, code_idx + 1, code_idx - 1])
+        code_candidates.extend([1, 2, 3, 4])
+        code_val, code_pos = first_non_empty(row_vals, code_candidates, used_positions)
+        if code_pos is not None:
+            used_positions.add(code_pos)
+        if not code_val:
             invalid_rows += 1
             continue
 
-        total_val = money_part[-1]
-        cashbox_val = money_part[-2]
-        station_val = money_part[-3] if len(money_part) >= 3 else ""
-        if not _is_numeric_like(total_val):
+        total_candidates = []
+        if total_idx is not None:
+            total_candidates.extend([total_idx, total_idx + 1, total_idx - 1, total_idx + 2])
+        total_candidates.extend([len(row_vals) - 1, len(row_vals) - 2, len(row_vals) - 3])
+        total_val, total_pos = first_numeric(row_vals, total_candidates, used_positions)
+        if total_pos is not None:
+            used_positions.add(total_pos)
+        if not total_val:
             invalid_rows += 1
             continue
-        if cashbox_val and not _is_numeric_like(cashbox_val):
+
+        cashbox_candidates = []
+        if cashbox_idx is not None:
+            cashbox_candidates.extend([cashbox_idx, cashbox_idx + 1, cashbox_idx - 1, cashbox_idx + 2])
+        if total_pos is not None:
+            cashbox_candidates.extend([total_pos - 1, total_pos - 2])
+        cashbox_val, cashbox_pos = first_numeric(row_vals, cashbox_candidates, used_positions)
+        if cashbox_pos is not None:
+            used_positions.add(cashbox_pos)
+            if cashbox_idx is not None and cashbox_pos in {cashbox_idx, cashbox_idx + 1, cashbox_idx - 1}:
+                cashbox_from_header_count += 1
+        if not cashbox_val:
             invalid_rows += 1
             continue
-        if station_val and not _is_numeric_like(station_val):
-            station_val = ""
+
+        station_candidates = []
+        if station_header_idx is not None:
+            station_candidates.extend([station_header_idx, station_header_idx + 1, station_header_idx + 2, station_header_idx - 1])
+        if cashbox_pos is not None:
+            station_candidates.extend([cashbox_pos + 1, cashbox_pos - 1, cashbox_pos + 2])
+        station_val, station_pos = first_numeric(row_vals, station_candidates, used_positions)
+        if station_pos is not None:
+            used_positions.add(station_pos)
+            station_from_dynamic_count += 1
 
         out_rows.append(
             {
@@ -235,7 +321,16 @@ def reconstruct_revenue_by_day_layout(df: pd.DataFrame) -> Tuple[Optional[pd.Dat
         return None, {"rows_total": total, "rows_invalid": invalid_rows}, "Не удалось реконструировать revenue_by_day: нет валидных строк."
     if total > 0 and (invalid_rows / total) > 0.35:
         return None, {"rows_total": total, "rows_invalid": invalid_rows}, "Небезопасная реконструкция revenue_by_day: слишком много невыравниваемых строк."
-    return pd.DataFrame(out_rows), {"rows_total": total, "rows_invalid": invalid_rows}, None
+    return (
+        pd.DataFrame(out_rows),
+        {
+            "rows_total": total,
+            "rows_invalid": invalid_rows,
+            "cashbox_from_header_count": cashbox_from_header_count,
+            "station_from_dynamic_count": station_from_dynamic_count,
+        },
+        None,
+    )
 
 
 def apply_sparse_alignment(df: pd.DataFrame, detected_type: str) -> Tuple[Optional[pd.DataFrame], Dict[str, Any], Optional[str]]:

@@ -61,6 +61,9 @@ def run():
     assert list(df3.columns) == ["Дата", "Код", "Касса Место", "Станция", "Итого"]
     r3 = df3.iloc[0].to_dict()
     assert r3["Дата"] == "01.03.2026"
+    assert r3["Код"] == "1Рубли"
+    assert r3["Касса Место"] == "28 933.80"
+    assert r3["Станция"] == "197 432.40"
     assert r3["Итого"] == "226 366.20"
 
     # 4) Sparse food_usage with concatenated Код+Блюдо.
