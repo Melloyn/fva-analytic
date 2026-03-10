@@ -23,6 +23,8 @@ from bot.keyboards import (
     kitchen_bar_metric_kb,
     kitchen_workshops_kb,
     abc_segment_kb,
+    bar_section_picker_kb,
+    abc_bar_section_picker_kb,
 )
 from bot.services import (
     get_revenue_report_text,
@@ -37,6 +39,9 @@ from bot.services import (
     get_kitchen_segment_abc_text,
     get_kitchen_workshops_metric_text,
     get_kitchen_workshops_abc_text,
+    get_bar_section_metric_text,
+    get_bar_section_top_text,
+    get_bar_section_abc_text,
     get_help_text,
 )
 
@@ -343,6 +348,8 @@ async def cb_kitchen_bar_flow(callback: CallbackQuery):
         seg = parts[2]
         if seg == "workshops":
             await callback.message.edit_text("Кухня по цехам:", reply_markup=kitchen_workshops_kb())
+        elif seg == "bar_by_bars":
+            await callback.message.edit_text("Бар по барам: выберите бар", reply_markup=bar_section_picker_kb("kbarbar"))
         else:
             title = "Бар" if seg == "bar" else "Кухня"
             await callback.message.edit_text(f"{title}: выберите метрику", reply_markup=kitchen_bar_metric_kb(seg))
@@ -352,12 +359,21 @@ async def cb_kitchen_bar_flow(callback: CallbackQuery):
     if action == "metric":
         seg = parts[2]
         metric = parts[3]
-        if metric == "top":
-            text = get_kitchen_segment_top_text(seg, metric="revenue")
-        elif metric == "abc":
-            text = get_kitchen_segment_abc_text(seg)
+        if seg.startswith("bar_section:"):
+            section_key = seg.split(":", 1)[1]
+            if metric == "top":
+                text = get_bar_section_top_text(section_key)
+            elif metric == "abc":
+                text = get_bar_section_abc_text(section_key)
+            else:
+                text = get_bar_section_metric_text(section_key, metric=metric)
         else:
-            text = get_kitchen_segment_metric_text(seg, metric=metric)
+            if metric == "top":
+                text = get_kitchen_segment_top_text(seg, metric="revenue")
+            elif metric == "abc":
+                text = get_kitchen_segment_abc_text(seg)
+            else:
+                text = get_kitchen_segment_metric_text(seg, metric=metric)
         await callback.message.edit_text(text, reply_markup=back_inline_kb())
         await callback.answer()
         return
@@ -380,6 +396,20 @@ async def cb_kitchen_bar_flow(callback: CallbackQuery):
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("kbarbar:"))
+async def cb_kitchen_bar_by_bar_flow(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    if len(parts) == 2:
+        bar_key = parts[1]
+        await callback.message.edit_text(
+            "Бар по барам: выберите метрику",
+            reply_markup=kitchen_bar_metric_kb(f"bar_section:{bar_key}"),
+        )
+        await callback.answer()
+        return
+    await callback.answer()
+
+
 # ====================
 # ABC segmented flow
 # ====================
@@ -387,10 +417,26 @@ async def cb_kitchen_bar_flow(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("abcseg:"))
 async def cb_abc_segment_flow(callback: CallbackQuery):
     _, seg = callback.data.split(":", 1)
+    if seg == "back":
+        await callback.message.edit_text("Выберите сегмент для ABC:", reply_markup=abc_segment_kb())
+        await callback.answer()
+        return
+    if seg == "bar_by_bars":
+        await callback.message.edit_text("ABC — Бар по барам: выберите бар", reply_markup=abc_bar_section_picker_kb())
+        await callback.answer()
+        return
     if seg == "workshops":
         text = get_kitchen_workshops_abc_text()
     else:
         text = get_kitchen_segment_abc_text(seg)
+    await callback.message.edit_text(text, reply_markup=back_inline_kb())
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("abcsegbar:"))
+async def cb_abc_bar_section_flow(callback: CallbackQuery):
+    _, section_key = callback.data.split(":", 1)
+    text = get_bar_section_abc_text(section_key)
     await callback.message.edit_text(text, reply_markup=back_inline_kb())
     await callback.answer()
 
