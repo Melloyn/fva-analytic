@@ -67,6 +67,22 @@ def _is_numeric_like(value: str) -> bool:
     return _to_float(value) is not None
 
 
+def _extract_total_revenue(nums: list[float]) -> Optional[float]:
+    # Totals rows usually look like: qty, avg_price, amount, paid, discount.
+    if not nums:
+        return None
+    if len(nums) >= 5:
+        paid = float(nums[-2])
+        amount = float(nums[-3])
+        return paid if paid > 0 else amount
+    if len(nums) >= 4:
+        paid = float(nums[-1])
+        amount = float(nums[-2])
+        return paid if paid > 0 else amount
+    positives = [float(x) for x in nums if float(x) > 0]
+    return max(positives) if positives else float(nums[-1])
+
+
 def _is_section_header(text: str) -> bool:
     if not text:
         return False
@@ -135,6 +151,8 @@ def _parse_item_name(cell: str) -> str:
 def _find_explicit_section(cells: list[str]) -> Optional[str]:
     for cell in cells:
         norm_cell = _normalize_section_key(cell)
+        if norm_cell.startswith("итого"):
+            continue
         for key, rule in EXACT_SECTION_RULES.items():
             if norm_cell == key or norm_cell.endswith(key):
                 return str(rule["section_name"])
@@ -202,9 +220,10 @@ def load_kitchen_bar_rows(base_dir: Path) -> Dict[str, Any]:
 
         if low_first.startswith("итого"):
             nums = [_to_float(c) for c in cells if _to_float(c) is not None]
-            if nums:
+            total_revenue = _extract_total_revenue([float(x) for x in nums if x is not None])
+            if total_revenue is not None:
                 canonical_section = _find_explicit_section([current_section]) or current_section
-                section_total_revenue[canonical_section] = float(nums[-1])
+                section_total_revenue[canonical_section] = float(total_revenue)
             continue
 
         if any(x in low_first for x in ["код", "блюдо", "кол-во", "сумма", "оплачено"]):
@@ -306,18 +325,17 @@ def aggregate_segment_metric(
 
     if metric == "revenue":
         total_col = "section_total_revenue"
-        if total_col in work.columns:
-            section_totals = (
-                work.groupby("section_name", dropna=False)[total_col]
-                .max()
-                .dropna()
-            )
-            if not section_totals.empty and float(section_totals.sum()) > 0:
-                value = float(section_totals.sum())
+        value = 0.0
+        for _, sec_df in work.groupby("section_name", dropna=False):
+            sec_total = None
+            if total_col in sec_df.columns:
+                sec_totals = sec_df[total_col].dropna()
+                if not sec_totals.empty:
+                    sec_total = float(sec_totals.max())
+            if sec_total is not None and sec_total > 0:
+                value += sec_total
             else:
-                value = float(work["revenue"].sum())
-        else:
-            value = float(work["revenue"].sum())
+                value += float(sec_df["revenue"].sum())
     elif metric == "quantity":
         value = float(work["quantity"].sum())
     else:
