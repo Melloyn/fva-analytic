@@ -394,6 +394,9 @@ def abc_by_segment(
         .reset_index()
         .sort_values("revenue", ascending=False)
     )
+    grouped = grouped[grouped["revenue"] > 0].copy()
+    if grouped.empty:
+        return {"ok": False, "reason": "Нет валидной положительной выручки для ABC."}
     total = float(grouped["revenue"].sum())
     if total <= 0:
         return {"ok": False, "reason": "Нет валидной выручки для ABC."}
