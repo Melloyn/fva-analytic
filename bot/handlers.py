@@ -26,6 +26,10 @@ from bot.keyboards import (
     bar_section_picker_kb,
     bar_section_metric_kb,
     abc_bar_section_picker_kb,
+    abc_back_to_segments_kb,
+    abc_back_to_bar_picker_kb,
+    weekday_result_back_kb,
+    daterange_result_back_kb,
 )
 from bot.services import (
     get_revenue_report_text,
@@ -115,7 +119,7 @@ async def msg_today(message: Message):
 @router.message(F.text == "🧾 Средний чек")
 async def msg_avg_check(message: Message):
     text = get_avg_check_text()
-    await message.answer(text, reply_markup=back_inline_kb())
+    await message.answer(text, reply_markup=back_inline_kb("avg:back"))
 
 
 @router.message(F.text == "🏃 Официанты")
@@ -137,7 +141,7 @@ async def msg_kitchen_bar(message: Message):
 @router.message(F.text == "ℹ️ Помощь")
 async def msg_help(message: Message):
     text = get_help_text()
-    await message.answer(text, reply_markup=back_inline_kb())
+    await message.answer(text, reply_markup=back_inline_kb("help:back"))
 
 
 @router.message(F.text == "📅 Выручка по дням недели")
@@ -176,7 +180,10 @@ async def cb_weekday_flow(callback: CallbackQuery, state: FSMContext):
 
     if action == "cancel":
         await state.clear()
-        await callback.message.edit_text("Действие отменено.", reply_markup=back_inline_kb())
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
         await callback.answer()
         return
 
@@ -212,8 +219,8 @@ async def cb_weekday_flow(callback: CallbackQuery, state: FSMContext):
 
         if mode == "all":
             text = get_revenue_by_weekday_month_text(month_text=month_text)
-            await state.clear()
-            await callback.message.edit_text(text, reply_markup=back_inline_kb())
+            await state.update_data(wd_month=month_text)
+            await callback.message.edit_text(text, reply_markup=weekday_result_back_kb("month"))
             await callback.answer()
             return
 
@@ -237,8 +244,29 @@ async def cb_weekday_flow(callback: CallbackQuery, state: FSMContext):
         month_text = data.get("wd_month")
         weekday_idx = int(parts[2])
         text = get_revenue_by_weekday_month_day_text(month_text=month_text or "", weekday_idx=weekday_idx)
-        await state.clear()
-        await callback.message.edit_text(text, reply_markup=back_inline_kb())
+        await callback.message.edit_text(text, reply_markup=weekday_result_back_kb("day"))
+        await callback.answer()
+        return
+
+    if action == "result_back":
+        target = parts[2] if len(parts) > 2 else "mode"
+        if target == "day":
+            month_text = data.get("wd_month")
+            if not month_text:
+                await state.set_state(BotFlowStates.weekday_mode)
+                await callback.message.edit_text("Выберите режим отчета по дням недели:", reply_markup=weekday_mode_kb())
+                await callback.answer()
+                return
+            await state.set_state(BotFlowStates.weekday_day)
+            await callback.message.edit_text(
+                f"Выберите день недели для {month_text}:",
+                reply_markup=weekday_select_kb(),
+            )
+            await callback.answer()
+            return
+        year = int(data.get("wd_year", date.today().year))
+        await state.set_state(BotFlowStates.weekday_month)
+        await callback.message.edit_text("Выберите год и месяц:", reply_markup=weekday_month_picker_kb(year))
         await callback.answer()
         return
 
@@ -260,7 +288,10 @@ async def cb_daterange_flow(callback: CallbackQuery, state: FSMContext):
 
     if action == "cancel":
         await state.clear()
-        await callback.message.edit_text("Действие отменено.", reply_markup=back_inline_kb())
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
         await callback.answer()
         return
 
@@ -288,7 +319,6 @@ async def cb_daterange_flow(callback: CallbackQuery, state: FSMContext):
                     await callback.message.delete()
                 except Exception:
                     pass
-                await callback.message.answer("Главное меню", reply_markup=main_menu_reply_keyboard())
                 await callback.answer()
                 return
 
@@ -326,10 +356,31 @@ async def cb_daterange_flow(callback: CallbackQuery, state: FSMContext):
                 date_from=_format_date_ru(start_date),
                 date_to=_format_date_ru(picked_date),
             )
-            await state.clear()
-            await callback.message.edit_text(text, reply_markup=back_inline_kb())
+            await callback.message.edit_text(text, reply_markup=daterange_result_back_kb())
+            await state.update_data(
+                dr_phase="start",
+                dr_step="year",
+                dr_year=picked_date.year,
+                dr_month=picked_date.month,
+                dr_start_date=None,
+            )
+            await state.set_state(BotFlowStates.daterange_pick)
             await callback.answer()
             return
+
+    if action == "result_back":
+        today = date.today()
+        await state.set_state(BotFlowStates.daterange_pick)
+        await state.update_data(
+            dr_phase="start",
+            dr_step="year",
+            dr_year=today.year,
+            dr_month=today.month,
+            dr_start_date=None,
+        )
+        await callback.message.edit_text("🗓 Выбор даты начала: выберите год", reply_markup=date_picker_year_kb(today.year))
+        await callback.answer()
+        return
 
     await state.update_data(dr_phase=phase, dr_step=step, dr_year=year, dr_month=month)
     await _render_daterange_picker(callback, state)
@@ -372,7 +423,7 @@ async def cb_kitchen_bar_flow(callback: CallbackQuery):
             text = get_kitchen_segment_abc_text(seg)
         else:
             text = get_kitchen_segment_metric_text(seg, metric=metric)
-        await callback.message.edit_text(text, reply_markup=back_inline_kb())
+        await callback.message.edit_text(text, reply_markup=kitchen_bar_metric_kb(seg))
         await callback.answer()
         return
 
@@ -382,12 +433,19 @@ async def cb_kitchen_bar_flow(callback: CallbackQuery):
             text = get_kitchen_workshops_abc_text()
         else:
             text = get_kitchen_workshops_metric_text(metric=metric)
-        await callback.message.edit_text(text, reply_markup=back_inline_kb())
+        await callback.message.edit_text(text, reply_markup=kitchen_workshops_kb())
         await callback.answer()
         return
 
     if action == "back":
         await callback.message.edit_text("Выберите сегмент кухни/бара:", reply_markup=kitchen_bar_segment_kb())
+        await callback.answer()
+        return
+    if action == "exit":
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
         await callback.answer()
         return
 
@@ -418,7 +476,7 @@ async def cb_kitchen_bar_by_bar_flow(callback: CallbackQuery):
             text = get_bar_section_abc_text(section_key)
         else:
             text = get_bar_section_metric_text(section_key, metric=metric)
-        await callback.message.edit_text(text, reply_markup=back_inline_kb())
+        await callback.message.edit_text(text, reply_markup=bar_section_metric_kb(section_key))
         await callback.answer()
         return
     await callback.answer()
@@ -431,6 +489,13 @@ async def cb_kitchen_bar_by_bar_flow(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("abcseg:"))
 async def cb_abc_segment_flow(callback: CallbackQuery):
     _, seg = callback.data.split(":", 1)
+    if seg == "exit":
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        await callback.answer()
+        return
     if seg == "back":
         await callback.message.edit_text("Выберите сегмент для ABC:", reply_markup=abc_segment_kb())
         await callback.answer()
@@ -443,15 +508,19 @@ async def cb_abc_segment_flow(callback: CallbackQuery):
         text = get_kitchen_workshops_abc_text()
     else:
         text = get_kitchen_segment_abc_text(seg)
-    await callback.message.edit_text(text, reply_markup=back_inline_kb())
+    await callback.message.edit_text(text, reply_markup=abc_back_to_segments_kb())
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("abcsegbar:"))
 async def cb_abc_bar_section_flow(callback: CallbackQuery):
     _, section_key = callback.data.split(":", 1)
+    if section_key == "back":
+        await callback.message.edit_text("ABC — Бар по барам: выберите бар", reply_markup=abc_bar_section_picker_kb())
+        await callback.answer()
+        return
     text = get_bar_section_abc_text(section_key)
-    await callback.message.edit_text(text, reply_markup=back_inline_kb())
+    await callback.message.edit_text(text, reply_markup=abc_back_to_bar_picker_kb())
     await callback.answer()
 
 
@@ -461,7 +530,15 @@ async def cb_abc_bar_section_flow(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("today:"))
 async def cb_today_period(callback: CallbackQuery):
-    days = int(callback.data.split(":")[1])
+    key = callback.data.split(":")[1]
+    if key == "back":
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        await callback.answer()
+        return
+    days = int(key)
     text = get_revenue_report_text(days=days)
     try:
         await callback.message.edit_text(text, reply_markup=today_inline_kb())
@@ -472,7 +549,15 @@ async def cb_today_period(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("waiters:"))
 async def cb_waiters_limit(callback: CallbackQuery):
-    limit = int(callback.data.split(":")[1])
+    key = callback.data.split(":")[1]
+    if key == "back":
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        await callback.answer()
+        return
+    limit = int(key)
     text = get_waiters_text(limit=limit)
     try:
         await callback.message.edit_text(text, reply_markup=waiters_inline_kb())
@@ -483,7 +568,15 @@ async def cb_waiters_limit(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("abc:"))
 async def cb_abc_sort(callback: CallbackQuery):
-    sort_by = callback.data.split(":")[1]
+    key = callback.data.split(":")[1]
+    if key == "back":
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        await callback.answer()
+        return
+    sort_by = key
     text = get_abc_menu_text(sort_by=sort_by)
     try:
         await callback.message.edit_text(text, reply_markup=abc_inline_kb())
@@ -499,5 +592,22 @@ async def cb_back(callback: CallbackQuery, state: FSMContext):
         await callback.message.delete()
     except Exception:
         pass
-    await callback.message.answer("Главное меню", reply_markup=main_menu_reply_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "avg:back")
+async def cb_avg_back(callback: CallbackQuery):
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@router.callback_query(F.data == "help:back")
+async def cb_help_back(callback: CallbackQuery):
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
     await callback.answer()
