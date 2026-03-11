@@ -24,6 +24,7 @@ from bot.keyboards import (
     kitchen_workshops_kb,
     abc_segment_kb,
     bar_section_picker_kb,
+    bar_section_metric_kb,
     abc_bar_section_picker_kb,
 )
 from bot.services import (
@@ -365,21 +366,12 @@ async def cb_kitchen_bar_flow(callback: CallbackQuery):
     if action == "metric":
         seg = parts[2]
         metric = parts[3]
-        if seg.startswith("bar_section:"):
-            section_key = seg.split(":", 1)[1]
-            if metric == "top":
-                text = get_bar_section_top_text(section_key)
-            elif metric == "abc":
-                text = get_bar_section_abc_text(section_key)
-            else:
-                text = get_bar_section_metric_text(section_key, metric=metric)
+        if metric == "top":
+            text = get_kitchen_segment_top_text(seg, metric="revenue")
+        elif metric == "abc":
+            text = get_kitchen_segment_abc_text(seg)
         else:
-            if metric == "top":
-                text = get_kitchen_segment_top_text(seg, metric="revenue")
-            elif metric == "abc":
-                text = get_kitchen_segment_abc_text(seg)
-            else:
-                text = get_kitchen_segment_metric_text(seg, metric=metric)
+            text = get_kitchen_segment_metric_text(seg, metric=metric)
         await callback.message.edit_text(text, reply_markup=back_inline_kb())
         await callback.answer()
         return
@@ -405,12 +397,28 @@ async def cb_kitchen_bar_flow(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("kbarbar:"))
 async def cb_kitchen_bar_by_bar_flow(callback: CallbackQuery):
     parts = callback.data.split(":")
-    if len(parts) == 2:
+    if len(parts) == 2 and parts[1] in {"bar_burger", "mesto_bar"}:
         bar_key = parts[1]
         await callback.message.edit_text(
             "Бар по барам: выберите метрику",
-            reply_markup=kitchen_bar_metric_kb(f"bar_section:{bar_key}"),
+            reply_markup=bar_section_metric_kb(bar_key),
         )
+        await callback.answer()
+        return
+    if len(parts) == 2 and parts[1] == "back":
+        await callback.message.edit_text("Бар по барам: выберите бар", reply_markup=bar_section_picker_kb("kbarbar"))
+        await callback.answer()
+        return
+    if len(parts) == 4 and parts[1] == "metric":
+        section_key = parts[2]
+        metric = parts[3]
+        if metric == "top":
+            text = get_bar_section_top_text(section_key)
+        elif metric == "abc":
+            text = get_bar_section_abc_text(section_key)
+        else:
+            text = get_bar_section_metric_text(section_key, metric=metric)
+        await callback.message.edit_text(text, reply_markup=back_inline_kb())
         await callback.answer()
         return
     await callback.answer()

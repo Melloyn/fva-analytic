@@ -189,6 +189,22 @@ def bar_section_picker_kb(prefix: str) -> InlineKeyboardMarkup:
     )
 
 
+def bar_section_metric_kb(section_key: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Выручка", callback_data=f"kbarbar:metric:{section_key}:revenue"),
+                InlineKeyboardButton(text="Количество", callback_data=f"kbarbar:metric:{section_key}:quantity"),
+            ],
+            [
+                InlineKeyboardButton(text="Топ позиций", callback_data=f"kbarbar:metric:{section_key}:top"),
+                InlineKeyboardButton(text="ABC", callback_data=f"kbarbar:metric:{section_key}:abc"),
+            ],
+            [InlineKeyboardButton(text="Назад", callback_data="kbarbar:back")],
+        ]
+    )
+
+
 def abc_bar_section_picker_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
