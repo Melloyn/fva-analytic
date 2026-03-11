@@ -423,12 +423,29 @@ def workshops_metric(
         return {"ok": False, "reason": "Нет данных по кухне/цехам."}
 
     metric_col = "revenue" if metric == "revenue" else "quantity"
-    grouped = (
-        work.groupby("workshop_name", dropna=False)[metric_col]
-        .sum()
-        .reset_index()
-        .sort_values(metric_col, ascending=False)
-    )
+    if metric == "revenue":
+        rows = []
+        for workshop, wdf in work.groupby("workshop_name", dropna=False):
+            value = 0.0
+            for _, sec_df in wdf.groupby("section_name", dropna=False):
+                sec_total = None
+                if "section_total_revenue" in sec_df.columns:
+                    sec_totals = sec_df["section_total_revenue"].dropna()
+                    if not sec_totals.empty:
+                        sec_total = float(sec_totals.max())
+                if sec_total is not None and sec_total > 0:
+                    value += sec_total
+                else:
+                    value += float(sec_df["revenue"].sum())
+            rows.append({"workshop_name": workshop, metric_col: value})
+        grouped = pd.DataFrame(rows).sort_values(metric_col, ascending=False)
+    else:
+        grouped = (
+            work.groupby("workshop_name", dropna=False)[metric_col]
+            .sum()
+            .reset_index()
+            .sort_values(metric_col, ascending=False)
+        )
     return {"ok": True, "table": grouped, "metric_col": metric_col}
 
 

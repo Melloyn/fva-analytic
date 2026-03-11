@@ -134,7 +134,7 @@ def kitchen_bar_segment_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="Кухня МЕСТО", callback_data="kbar:seg:kitchen_mesto")],
             [InlineKeyboardButton(text="Кухня burger", callback_data="kbar:seg:kitchen_burger")],
             [InlineKeyboardButton(text="Кухня по цехам", callback_data="kbar:seg:workshops")],
-            [InlineKeyboardButton(text="Назад", callback_data="action:back")],
+            [InlineKeyboardButton(text="Назад", callback_data="kbar:exit")],
         ]
     )
 
@@ -174,7 +174,7 @@ def abc_segment_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="Кухня МЕСТО", callback_data="abcseg:kitchen_mesto")],
             [InlineKeyboardButton(text="Кухня burger", callback_data="abcseg:kitchen_burger")],
             [InlineKeyboardButton(text="Кухня по цехам", callback_data="abcseg:workshops")],
-            [InlineKeyboardButton(text="Назад", callback_data="action:back")],
+            [InlineKeyboardButton(text="Назад", callback_data="abcseg:exit")],
         ]
     )
 
@@ -215,6 +215,22 @@ def abc_bar_section_picker_kb() -> InlineKeyboardMarkup:
     )
 
 
+def abc_back_to_segments_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Назад", callback_data="abcseg:back")],
+        ]
+    )
+
+
+def abc_back_to_bar_picker_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Назад", callback_data="abcsegbar:back")],
+        ]
+    )
+
+
 def today_inline_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -223,7 +239,7 @@ def today_inline_kb() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="7 дней", callback_data="today:7"),
                 InlineKeyboardButton(text="30 дней", callback_data="today:30"),
             ],
-            [InlineKeyboardButton(text="Назад", callback_data="action:back")]
+            [InlineKeyboardButton(text="Назад", callback_data="today:back")]
         ]
     )
 
@@ -235,7 +251,7 @@ def waiters_inline_kb() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="Топ-5", callback_data="waiters:5"),
                 InlineKeyboardButton(text="Топ-10", callback_data="waiters:10"),
             ],
-            [InlineKeyboardButton(text="Назад", callback_data="action:back")]
+            [InlineKeyboardButton(text="Назад", callback_data="waiters:back")]
         ]
     )
 
@@ -247,14 +263,30 @@ def abc_inline_kb() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="По выручке", callback_data="abc:revenue"),
                 InlineKeyboardButton(text="По количеству", callback_data="abc:quantity"),
             ],
-            [InlineKeyboardButton(text="Назад", callback_data="action:back")]
+            [InlineKeyboardButton(text="Назад", callback_data="abc:back")]
         ]
     )
 
 
-def back_inline_kb() -> InlineKeyboardMarkup:
+def back_inline_kb(callback_data: str = "action:back") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Назад", callback_data="action:back")]
+            [InlineKeyboardButton(text="Назад", callback_data=callback_data)]
+        ]
+    )
+
+
+def weekday_result_back_kb(target: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Назад", callback_data=f"weekday:result_back:{target}")],
+        ]
+    )
+
+
+def daterange_result_back_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Назад", callback_data="daterange:result_back")],
         ]
     )
