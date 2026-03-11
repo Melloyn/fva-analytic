@@ -10,7 +10,6 @@ from bot.keyboards import (
     main_menu_reply_keyboard,
     today_inline_kb,
     waiters_inline_kb,
-    abc_inline_kb,
     back_inline_kb,
     weekday_mode_kb,
     weekday_month_picker_kb,
@@ -22,12 +21,8 @@ from bot.keyboards import (
     kitchen_bar_segment_kb,
     kitchen_bar_metric_kb,
     kitchen_workshops_kb,
-    abc_segment_kb,
     bar_section_picker_kb,
     bar_section_metric_kb,
-    abc_bar_section_picker_kb,
-    abc_back_to_segments_kb,
-    abc_back_to_bar_picker_kb,
     weekday_result_back_kb,
     daterange_result_back_kb,
 )
@@ -38,7 +33,6 @@ from bot.services import (
     get_revenue_by_weekday_month_day_text,
     get_avg_check_text,
     get_waiters_text,
-    get_abc_menu_text,
     get_kitchen_segment_metric_text,
     get_kitchen_segment_top_text,
     get_kitchen_segment_abc_text,
@@ -126,11 +120,6 @@ async def msg_avg_check(message: Message):
 async def msg_waiters(message: Message):
     text = get_waiters_text(limit=5)
     await message.answer(text, reply_markup=waiters_inline_kb())
-
-
-@router.message(F.text == "🍽 ABC меню")
-async def msg_abc(message: Message):
-    await message.answer("Выберите сегмент для ABC:", reply_markup=abc_segment_kb())
 
 
 @router.message(F.text == "🍳 Кухня / бар")
@@ -483,48 +472,6 @@ async def cb_kitchen_bar_by_bar_flow(callback: CallbackQuery):
 
 
 # ====================
-# ABC segmented flow
-# ====================
-
-@router.callback_query(F.data.startswith("abcseg:"))
-async def cb_abc_segment_flow(callback: CallbackQuery):
-    _, seg = callback.data.split(":", 1)
-    if seg == "exit":
-        try:
-            await callback.message.delete()
-        except Exception:
-            pass
-        await callback.answer()
-        return
-    if seg == "back":
-        await callback.message.edit_text("Выберите сегмент для ABC:", reply_markup=abc_segment_kb())
-        await callback.answer()
-        return
-    if seg == "bar_by_bars":
-        await callback.message.edit_text("ABC — Бар по барам: выберите бар", reply_markup=abc_bar_section_picker_kb())
-        await callback.answer()
-        return
-    if seg == "workshops":
-        text = get_kitchen_workshops_abc_text()
-    else:
-        text = get_kitchen_segment_abc_text(seg)
-    await callback.message.edit_text(text, reply_markup=abc_back_to_segments_kb())
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("abcsegbar:"))
-async def cb_abc_bar_section_flow(callback: CallbackQuery):
-    _, section_key = callback.data.split(":", 1)
-    if section_key == "back":
-        await callback.message.edit_text("ABC — Бар по барам: выберите бар", reply_markup=abc_bar_section_picker_kb())
-        await callback.answer()
-        return
-    text = get_bar_section_abc_text(section_key)
-    await callback.message.edit_text(text, reply_markup=abc_back_to_bar_picker_kb())
-    await callback.answer()
-
-
-# ====================
 # Inline Keyboard Handlers (Contextual Actions)
 # ====================
 
@@ -564,26 +511,6 @@ async def cb_waiters_limit(callback: CallbackQuery):
     except Exception:
         pass
     await callback.answer()
-
-
-@router.callback_query(F.data.startswith("abc:"))
-async def cb_abc_sort(callback: CallbackQuery):
-    key = callback.data.split(":")[1]
-    if key == "back":
-        try:
-            await callback.message.delete()
-        except Exception:
-            pass
-        await callback.answer()
-        return
-    sort_by = key
-    text = get_abc_menu_text(sort_by=sort_by)
-    try:
-        await callback.message.edit_text(text, reply_markup=abc_inline_kb())
-    except Exception:
-        pass
-    await callback.answer()
-
 
 @router.callback_query(F.data == "action:back")
 async def cb_back(callback: CallbackQuery, state: FSMContext):

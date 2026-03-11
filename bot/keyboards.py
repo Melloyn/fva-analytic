@@ -13,9 +13,9 @@ def main_menu_reply_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📊 Сегодня"), KeyboardButton(text="🧾 Средний чек")],
-            [KeyboardButton(text="🏃 Официанты"), KeyboardButton(text="🍽 ABC меню")],
+            [KeyboardButton(text="🏃 Официанты"), KeyboardButton(text="🍳 Кухня / бар")],
             [KeyboardButton(text="🗓 Отчет за период"), KeyboardButton(text="📅 Выручка по дням недели")],
-            [KeyboardButton(text="🍳 Кухня / бар"), KeyboardButton(text="ℹ️ Помощь")],
+            [KeyboardButton(text="ℹ️ Помощь")],
         ],
         resize_keyboard=True,
         input_field_placeholder="Выберите отчёт"
@@ -166,19 +166,6 @@ def kitchen_workshops_kb() -> InlineKeyboardMarkup:
     )
 
 
-def abc_segment_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="Бар", callback_data="abcseg:bar")],
-            [InlineKeyboardButton(text="Бар по барам", callback_data="abcseg:bar_by_bars")],
-            [InlineKeyboardButton(text="Кухня МЕСТО", callback_data="abcseg:kitchen_mesto")],
-            [InlineKeyboardButton(text="Кухня burger", callback_data="abcseg:kitchen_burger")],
-            [InlineKeyboardButton(text="Кухня по цехам", callback_data="abcseg:workshops")],
-            [InlineKeyboardButton(text="Назад", callback_data="abcseg:exit")],
-        ]
-    )
-
-
 def bar_section_picker_kb(prefix: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -205,32 +192,6 @@ def bar_section_metric_kb(section_key: str) -> InlineKeyboardMarkup:
     )
 
 
-def abc_bar_section_picker_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="Бар burger", callback_data="abcsegbar:bar_burger")],
-            [InlineKeyboardButton(text="МЕСТО Бар", callback_data="abcsegbar:mesto_bar")],
-            [InlineKeyboardButton(text="Назад", callback_data="abcseg:back")],
-        ]
-    )
-
-
-def abc_back_to_segments_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="Назад", callback_data="abcseg:back")],
-        ]
-    )
-
-
-def abc_back_to_bar_picker_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="Назад", callback_data="abcsegbar:back")],
-        ]
-    )
-
-
 def today_inline_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -252,18 +213,6 @@ def waiters_inline_kb() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="Топ-10", callback_data="waiters:10"),
             ],
             [InlineKeyboardButton(text="Назад", callback_data="waiters:back")]
-        ]
-    )
-
-
-def abc_inline_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="По выручке", callback_data="abc:revenue"),
-                InlineKeyboardButton(text="По количеству", callback_data="abc:quantity"),
-            ],
-            [InlineKeyboardButton(text="Назад", callback_data="abc:back")]
         ]
     )
 
