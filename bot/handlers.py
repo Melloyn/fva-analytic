@@ -351,7 +351,13 @@ async def cb_kitchen_bar_flow(callback: CallbackQuery):
         elif seg == "bar_by_bars":
             await callback.message.edit_text("Бар по барам: выберите бар", reply_markup=bar_section_picker_kb("kbarbar"))
         else:
-            title = "Бар" if seg == "bar" else "Кухня"
+            title_map = {
+                "bar": "Бар",
+                "kitchen_mesto": "Кухня МЕСТО",
+                "kitchen_burger": "Кухня burger",
+                "kitchen": "Кухня",
+            }
+            title = title_map.get(seg, "Кухня")
             await callback.message.edit_text(f"{title}: выберите метрику", reply_markup=kitchen_bar_metric_kb(seg))
         await callback.answer()
         return

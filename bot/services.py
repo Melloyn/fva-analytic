@@ -22,7 +22,8 @@ from backend.analytics.kitchen_bar_segments import (
     workshops_abc,
     BAR_SECTION_NAMES,
     BAR_SECTION_KEYS,
-    KITCHEN_SECTION_NAMES,
+    KITCHEN_MESTO_SECTION_NAMES,
+    KITCHEN_BURGER_SECTION_NAMES,
     KITCHEN_WORKSHOP_SECTION_NAMES,
 )
 from backend.utils.format import format_rub
@@ -495,7 +496,28 @@ def get_kitchen_bar_text() -> str:
 
 
 def _segment_title(segment: str) -> str:
-    return {"bar": "Бар", "kitchen": "Кухня"}.get(segment, segment)
+    return {
+        "bar": "Бар",
+        "kitchen_mesto": "Кухня МЕСТО",
+        "kitchen_burger": "Кухня burger",
+        "kitchen": "Кухня",
+    }.get(segment, segment)
+
+
+def _segment_sections(segment: str) -> list[str]:
+    if segment == "bar":
+        return BAR_SECTION_NAMES
+    if segment == "kitchen_mesto":
+        return KITCHEN_MESTO_SECTION_NAMES
+    if segment == "kitchen_burger":
+        return KITCHEN_BURGER_SECTION_NAMES
+    if segment == "kitchen":
+        return KITCHEN_MESTO_SECTION_NAMES + KITCHEN_BURGER_SECTION_NAMES
+    return []
+
+
+def _segment_type(segment: str) -> str:
+    return "bar" if segment == "bar" else "kitchen"
 
 
 def _load_kitchen_segment_df():
@@ -510,8 +532,13 @@ def get_kitchen_segment_metric_text(segment: str, metric: str) -> str:
     if err:
         return f"🍳 {_segment_title(segment)}\n\n{err}"
 
-    section_names = BAR_SECTION_NAMES if segment == "bar" else KITCHEN_SECTION_NAMES
-    result = aggregate_segment_metric(df, segment=segment, metric=metric, section_names=section_names)
+    section_names = _segment_sections(segment)
+    result = aggregate_segment_metric(
+        df,
+        segment=_segment_type(segment),
+        metric=metric,
+        section_names=section_names,
+    )
     if not result.get("ok"):
         return f"🍳 {_segment_title(segment)}\n\n{result.get('reason')}"
 
@@ -534,8 +561,14 @@ def get_kitchen_segment_top_text(segment: str, metric: str = "revenue", limit: i
     if err:
         return f"🍳 {_segment_title(segment)}\n\n{err}"
 
-    section_names = BAR_SECTION_NAMES if segment == "bar" else KITCHEN_SECTION_NAMES
-    result = top_items_by_segment(df, segment=segment, metric=metric, limit=limit, section_names=section_names)
+    section_names = _segment_sections(segment)
+    result = top_items_by_segment(
+        df,
+        segment=_segment_type(segment),
+        metric=metric,
+        limit=limit,
+        section_names=section_names,
+    )
     if not result.get("ok"):
         return f"🍳 {_segment_title(segment)}\n\n{result.get('reason')}"
 
@@ -554,8 +587,8 @@ def get_kitchen_segment_abc_text(segment: str) -> str:
     if err:
         return f"🍽 ABC — {_segment_title(segment)}\n\n{err}"
 
-    section_names = BAR_SECTION_NAMES if segment == "bar" else KITCHEN_SECTION_NAMES
-    result = abc_by_segment(df, segment=segment, section_names=section_names)
+    section_names = _segment_sections(segment)
+    result = abc_by_segment(df, segment=_segment_type(segment), section_names=section_names)
     if not result.get("ok"):
         return f"🍽 ABC — {_segment_title(segment)}\n\n{result.get('reason')}"
 

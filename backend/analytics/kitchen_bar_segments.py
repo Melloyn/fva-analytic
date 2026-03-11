@@ -11,7 +11,13 @@ BAR_SECTION_KEYS = {
     "bar_burger": "Бар burger",
     "mesto_bar": "МЕСТО Бар",
 }
-KITCHEN_SECTION_NAMES = ["Кухня burger", "СУШИ-М Кухня"]
+KITCHEN_MESTO_SECTION_NAMES = [
+    "МЕСТО Гор. цех",
+    "МЕСТО Хол.цех",
+    "Место Гор. + Хол. цех",
+    "СУШИ-М Кухня",
+]
+KITCHEN_BURGER_SECTION_NAMES = ["Кухня burger"]
 KITCHEN_WORKSHOP_SECTION_NAMES = [
     "МЕСТО Гор. цех",
     "МЕСТО Хол.цех",
@@ -19,6 +25,8 @@ KITCHEN_WORKSHOP_SECTION_NAMES = [
     "СУШИ-М Кухня",
     "Кухня burger",
 ]
+# Backward-compat alias: kitchen = МЕСТО кухня + burger кухня.
+KITCHEN_SECTION_NAMES = KITCHEN_MESTO_SECTION_NAMES + KITCHEN_BURGER_SECTION_NAMES
 
 EXACT_SECTION_RULES = {
     "бар burger": {"section_name": "Бар burger", "segment": "bar", "workshop": ""},
@@ -168,6 +176,7 @@ def load_kitchen_bar_rows(base_dir: Path) -> Dict[str, Any]:
 
     text = _decode_bytes(src.read_bytes())
     rows = []
+    section_total_revenue: dict[str, float] = {}
     current_section = "Неизвестный раздел"
     section_headers_found = 0
 
@@ -192,6 +201,10 @@ def load_kitchen_bar_rows(base_dir: Path) -> Dict[str, Any]:
             continue
 
         if low_first.startswith("итого"):
+            nums = [_to_float(c) for c in cells if _to_float(c) is not None]
+            if nums:
+                canonical_section = _find_explicit_section([current_section]) or current_section
+                section_total_revenue[canonical_section] = float(nums[-1])
             continue
 
         if any(x in low_first for x in ["код", "блюдо", "кол-во", "сумма", "оплачено"]):
@@ -251,6 +264,12 @@ def load_kitchen_bar_rows(base_dir: Path) -> Dict[str, Any]:
         return {"ok": False, "reason": "В отчете нет валидных строк позиций для сегментного анализа."}
 
     df = pd.DataFrame(rows)
+    if section_total_revenue:
+        df["section_total_revenue"] = (
+            df["section_name"].astype(str).map(section_total_revenue).astype(float)
+        )
+    else:
+        df["section_total_revenue"] = pd.NA
     segment_counts = df["segment_type"].value_counts().to_dict()
     classified = int(segment_counts.get("bar", 0)) + int(segment_counts.get("kitchen", 0))
     if section_headers_found == 0 or classified == 0:
@@ -286,7 +305,19 @@ def aggregate_segment_metric(
         return {"ok": False, "reason": "Нет данных для выбранного сегмента."}
 
     if metric == "revenue":
-        value = float(work["revenue"].sum())
+        total_col = "section_total_revenue"
+        if total_col in work.columns:
+            section_totals = (
+                work.groupby("section_name", dropna=False)[total_col]
+                .max()
+                .dropna()
+            )
+            if not section_totals.empty and float(section_totals.sum()) > 0:
+                value = float(section_totals.sum())
+            else:
+                value = float(work["revenue"].sum())
+        else:
+            value = float(work["revenue"].sum())
     elif metric == "quantity":
         value = float(work["quantity"].sum())
     else:

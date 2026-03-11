@@ -131,7 +131,8 @@ def kitchen_bar_segment_kb() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="Бар", callback_data="kbar:seg:bar")],
             [InlineKeyboardButton(text="Бар по барам", callback_data="kbar:seg:bar_by_bars")],
-            [InlineKeyboardButton(text="Кухня", callback_data="kbar:seg:kitchen")],
+            [InlineKeyboardButton(text="Кухня МЕСТО", callback_data="kbar:seg:kitchen_mesto")],
+            [InlineKeyboardButton(text="Кухня burger", callback_data="kbar:seg:kitchen_burger")],
             [InlineKeyboardButton(text="Кухня по цехам", callback_data="kbar:seg:workshops")],
             [InlineKeyboardButton(text="Назад", callback_data="action:back")],
         ]
@@ -170,7 +171,8 @@ def abc_segment_kb() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="Бар", callback_data="abcseg:bar")],
             [InlineKeyboardButton(text="Бар по барам", callback_data="abcseg:bar_by_bars")],
-            [InlineKeyboardButton(text="Кухня", callback_data="abcseg:kitchen")],
+            [InlineKeyboardButton(text="Кухня МЕСТО", callback_data="abcseg:kitchen_mesto")],
+            [InlineKeyboardButton(text="Кухня burger", callback_data="abcseg:kitchen_burger")],
             [InlineKeyboardButton(text="Кухня по цехам", callback_data="abcseg:workshops")],
             [InlineKeyboardButton(text="Назад", callback_data="action:back")],
         ]
