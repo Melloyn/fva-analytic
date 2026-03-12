@@ -237,27 +237,34 @@ def load_kitchen_bar_rows(base_dir: Path) -> Dict[str, Any]:
         if not item_name:
             continue
 
-        # Parse numeric metrics from the tail to avoid code/index numbers at row start.
-        if len(nums) >= 4:
-            quantity = float(nums[-4])
+        # Parse numeric metrics from the tail.
+        # Typical R-Keeper item shape:
+        #   qty, avg_price, amount, paid, discount
+        if len(nums) >= 5:
+            quantity = float(nums[-5])
             amount = float(nums[-3])
-            discount = float(nums[-2])
+            paid = float(nums[-2])
+            discount = float(nums[-1])
+        elif len(nums) == 4:
+            quantity = float(nums[-4])
+            amount = float(nums[-2])
             paid = float(nums[-1])
+            discount = 0.0
         elif len(nums) == 3:
             quantity = float(nums[-3])
             amount = float(nums[-2])
-            discount = 0.0
             paid = float(nums[-1])
+            discount = 0.0
         elif len(nums) == 2:
             quantity = float(nums[-2])
             amount = float(nums[-1])
-            discount = 0.0
             paid = amount
+            discount = 0.0
         else:
             quantity = float(nums[-1])
             amount = 0.0
-            discount = 0.0
             paid = 0.0
+            discount = 0.0
 
         revenue = paid if paid != 0 else amount
 
