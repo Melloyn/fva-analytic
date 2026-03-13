@@ -1025,25 +1025,81 @@ def prepare_kpi_df(parsed_df: pd.DataFrame, mapping: Dict[str, Optional[str]], r
     return df_kpi
 
 
+def _normalize_spreadsheet_df(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df.columns = [
+        re.sub(r"\s+", " ", str(c).replace("\u00A0", " ").replace("\u202F", " ").strip())
+        for c in df.columns
+    ]
+    return df.dropna(how="all").reset_index(drop=True)
+
+
+def _parse_xlsx_bytes(raw: bytes) -> Tuple[Optional[pd.DataFrame], Dict, Optional[str]]:
+    try:
+        df = pd.read_excel(BytesIO(raw))
+        info = {"encoding": None, "delimiter": None, "header_row_index": None, "attempts": []}
+        return _normalize_spreadsheet_df(df), info, None
+    except Exception as err:
+        return None, {"attempts": []}, f"Ошибка чтения XLSX: {err}"
+
+
+def _looks_like_html_xls(raw: bytes) -> bool:
+    head = raw[:4096].decode("latin1", errors="ignore").lower()
+    return any(marker in head for marker in ["<html", "<table", "<tr", "<td", "<meta"])
+
+
+def _parse_xls_bytes(raw: bytes) -> Tuple[Optional[pd.DataFrame], Dict, Optional[str]]:
+    attempts: List[Dict[str, Any]] = []
+
+    try:
+        df = pd.read_excel(BytesIO(raw))
+        attempts.append({"parser": "legacy_excel", "status": "ok", "error": ""})
+        info = {"encoding": None, "delimiter": None, "header_row_index": None, "attempts": attempts}
+        return _normalize_spreadsheet_df(df), info, None
+    except Exception as err:
+        attempts.append({"parser": "legacy_excel", "status": "failed", "error": str(err)})
+
+    html_hint = _looks_like_html_xls(raw)
+    try:
+        tables = pd.read_html(BytesIO(raw))
+        if not tables:
+            raise ValueError("HTML-таблицы не найдены.")
+        df = tables[0]
+        attempts.append({"parser": "html_table", "status": "ok", "error": "", "tables_found": len(tables)})
+        info = {
+            "encoding": None,
+            "delimiter": None,
+            "header_row_index": None,
+            "attempts": attempts,
+            "html_hint": html_hint,
+        }
+        return _normalize_spreadsheet_df(df), info, None
+    except Exception as err:
+        attempts.append({"parser": "html_table", "status": "failed", "error": str(err), "html_hint": html_hint})
+
+    return (
+        None,
+        {"attempts": attempts, "html_hint": html_hint},
+        (
+            "Не удалось разобрать XLS-файл ни как legacy Excel, ни как HTML-экспорт. "
+            "Проверьте экспорт из R-Keeper и попробуйте выгрузить файл повторно."
+        ),
+    )
+
+
 def load_file(uploaded_file) -> Tuple[Optional[pd.DataFrame], Dict, Optional[str]]:
     name = uploaded_file.name.lower()
+    raw = uploaded_file.getvalue()
     if name.endswith(".xlsx"):
-        try:
-            df = pd.read_excel(uploaded_file)
-            df.columns = [
-                re.sub(r"\s+", " ", str(c).replace("\u00A0", " ").replace("\u202F", " ").strip())
-                for c in df.columns
-            ]
-            df = df.dropna(how="all").reset_index(drop=True)
-            info = {"encoding": None, "delimiter": None, "header_row_index": None, "attempts": []}
-            return df, info, None
-        except Exception as err:
-            return None, {"attempts": []}, f"Ошибка чтения XLSX: {err}"
+        return _parse_xlsx_bytes(raw)
+
+    if name.endswith(".xls"):
+        return _parse_xls_bytes(raw)
 
     if name.endswith(".csv"):
-        return parse_csv_bytes(uploaded_file.getvalue())
+        return parse_csv_bytes(raw)
 
-    return None, {"attempts": []}, "Поддерживаются только CSV и XLSX."
+    return None, {"attempts": []}, "Поддерживаются только CSV, XLSX и XLS."
 
 
 def is_kitchen_bar_section_report_filename(file_name: str) -> bool:
