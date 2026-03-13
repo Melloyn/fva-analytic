@@ -1097,6 +1097,37 @@ def _looks_like_html_xls(raw: bytes) -> bool:
     return any(marker in head for marker in ["<!doctype html", "<html", "<table", "<tr", "<td", "<meta"])
 
 
+def _html_text_quality_score(text: str) -> int:
+    sample = text[:20000]
+    cyr = len(re.findall(r"[А-Яа-яЁё]", sample))
+    mojibake = (
+        sample.count("Äàòà")
+        + sample.count("Ð")
+        + sample.count("Ñ")
+        + len(re.findall(r"[ÃÄÅÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß]", sample))
+    )
+    return cyr - mojibake * 4
+
+
+def _repair_html_text_if_needed(html_text: str) -> str:
+    base_score = _html_text_quality_score(html_text)
+    if base_score >= 0 and "Äàòà" not in html_text and "Ð" not in html_text and "Ñ" not in html_text:
+        return html_text
+
+    best = html_text
+    best_score = base_score
+    for src, dst in [("latin1", "cp1251"), ("latin1", "utf-8"), ("cp1251", "utf-8")]:
+        try:
+            candidate = html_text.encode(src).decode(dst)
+        except Exception:
+            continue
+        candidate_score = _html_text_quality_score(candidate)
+        if candidate_score > best_score + 5:
+            best = candidate
+            best_score = candidate_score
+    return best
+
+
 class _HTMLTableExtractor(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
@@ -1173,6 +1204,9 @@ def _parse_html_xls_bytes(raw: bytes, attempts: List[Dict[str, Any]]) -> Tuple[O
         except Exception as err:
             attempts.append({"parser": "html_table", "encoding": encoding, "status": "decode_failed", "error": str(err)})
             continue
+        repaired_html_text = _repair_html_text_if_needed(html_text)
+        html_repaired = repaired_html_text != html_text
+        html_text = repaired_html_text
 
         try:
             extractor = _HTMLTableExtractor()
@@ -1188,6 +1222,7 @@ def _parse_html_xls_bytes(raw: bytes, attempts: List[Dict[str, Any]]) -> Tuple[O
                         "error": "",
                         "tables_found": len(extractor.tables),
                         "shape": list(df.shape),
+                        "html_repaired": html_repaired,
                     }
                 )
                 return _normalize_spreadsheet_df(df), encoding, None
@@ -1206,6 +1241,7 @@ def _parse_html_xls_bytes(raw: bytes, attempts: List[Dict[str, Any]]) -> Tuple[O
                     "status": "ok",
                     "error": "",
                     "tables_found": len(tables),
+                    "html_repaired": html_repaired,
                 }
             )
             return _normalize_spreadsheet_df(tables[0]), encoding, None
