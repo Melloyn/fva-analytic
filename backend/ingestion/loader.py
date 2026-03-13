@@ -1083,6 +1083,69 @@ def _normalize_spreadsheet_df(df: pd.DataFrame) -> pd.DataFrame:
     return df.dropna(how="all").reset_index(drop=True)
 
 
+def _small_text_quality_score(text: str) -> int:
+    sample = text[:400]
+    cyr = len(re.findall(r"[А-Яа-яЁё]", sample))
+    mojibake = len(re.findall(r"[ÃÄÅÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞßàáâãäåæçèéêëìíîï]", sample))
+    return cyr - mojibake * 4
+
+
+def _repair_mojibake_text(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    original = _clean_cell(value)
+    if not original:
+        return original
+
+    best = original
+    best_score = _small_text_quality_score(original)
+    for src, dst in [("latin1", "cp1251"), ("latin1", "utf-8"), ("cp1251", "utf-8")]:
+        try:
+            candidate = original.encode(src).decode(dst)
+        except Exception:
+            continue
+        candidate = _clean_cell(candidate)
+        score = _small_text_quality_score(candidate)
+        if score > best_score + 1:
+            best = candidate
+            best_score = score
+    return best
+
+
+def _postprocess_html_table_df(df: pd.DataFrame) -> pd.DataFrame:
+    work = df.copy()
+    work.columns = [_repair_mojibake_text(str(c)) for c in work.columns]
+
+    for idx in range(work.shape[1]):
+        col = work.iloc[:, idx]
+        if pd.api.types.is_object_dtype(col) or pd.api.types.is_string_dtype(col):
+            work.iloc[:, idx] = col.map(_repair_mojibake_text)
+
+    current_header_score = _header_keyword_score([str(c) for c in work.columns])
+    best_idx: Optional[int] = None
+    best_score = current_header_score
+    for idx in range(min(len(work), 6)):
+        row = [_repair_mojibake_text(_clean_cell(v)) for v in work.iloc[idx].tolist()]
+        non_empty = sum(1 for v in row if v)
+        if non_empty < 2:
+            continue
+        row_score = _header_keyword_score(row)
+        is_period_row = any(normalize_col_name(v).startswith("дата ") and ":" in str(v).lower() for v in row)
+        if is_period_row:
+            continue
+        if row_score >= max(2, current_header_score + 1) and row_score > best_score:
+            best_idx = idx
+            best_score = row_score
+
+    if best_idx is not None:
+        header = [_repair_mojibake_text(_clean_cell(v)) for v in work.iloc[best_idx].tolist()]
+        body = work.iloc[best_idx + 1 :].reset_index(drop=True).copy()
+        body.columns = header
+        work = body
+
+    return _normalize_spreadsheet_df(work)
+
+
 def _parse_xlsx_bytes(raw: bytes) -> Tuple[Optional[pd.DataFrame], Dict, Optional[str]]:
     try:
         df = pd.read_excel(BytesIO(raw))
@@ -1131,7 +1194,7 @@ def _promote_html_header(df: pd.DataFrame) -> Tuple[pd.DataFrame, Optional[int]]
     best_non_empty = -1
 
     for idx in range(scan_limit):
-        row = [_clean_cell(v) for v in df.iloc[idx].tolist()]
+        row = [_repair_mojibake_text(_clean_cell(v)) for v in df.iloc[idx].tolist()]
         non_empty = sum(1 for v in row if v)
         if non_empty < 2:
             continue
@@ -1147,7 +1210,7 @@ def _promote_html_header(df: pd.DataFrame) -> Tuple[pd.DataFrame, Optional[int]]
     if best_idx is None or best_score < 10:
         return df, None
 
-    header = [_clean_cell(v) for v in df.iloc[best_idx].tolist()]
+    header = [_repair_mojibake_text(_clean_cell(v)) for v in df.iloc[best_idx].tolist()]
     body = df.iloc[best_idx + 1 :].reset_index(drop=True).copy()
     body.columns = header
     return body, best_idx
@@ -1273,7 +1336,7 @@ def _parse_html_xls_bytes(raw: bytes, attempts: List[Dict[str, Any]]) -> Tuple[O
             df = _select_best_html_table(extractor.tables)
             if df is not None and not df.empty:
                 promoted_df, header_idx = _promote_html_header(df)
-                normalized_df = _normalize_spreadsheet_df(promoted_df if promoted_df is not None and not promoted_df.empty else df)
+                normalized_df = _postprocess_html_table_df(promoted_df if promoted_df is not None and not promoted_df.empty else df)
                 quality = _text_quality_score(html_text) + _dataframe_quality_score(normalized_df)
                 attempts.append(
                     {
@@ -1302,7 +1365,7 @@ def _parse_html_xls_bytes(raw: bytes, attempts: List[Dict[str, Any]]) -> Tuple[O
             best_header_idx: Optional[int] = None
             for table in tables:
                 promoted_df, header_idx = _promote_html_header(table)
-                normalized_df = _normalize_spreadsheet_df(promoted_df if promoted_df is not None and not promoted_df.empty else table)
+                normalized_df = _postprocess_html_table_df(promoted_df if promoted_df is not None and not promoted_df.empty else table)
                 table_quality = _dataframe_quality_score(normalized_df)
                 if table_quality > best_table_quality:
                     best_table_quality = table_quality
