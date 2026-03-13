@@ -1045,37 +1045,80 @@ def _parse_xlsx_bytes(raw: bytes) -> Tuple[Optional[pd.DataFrame], Dict, Optiona
 
 def _looks_like_html_xls(raw: bytes) -> bool:
     head = raw[:4096].decode("latin1", errors="ignore").lower()
-    return any(marker in head for marker in ["<html", "<table", "<tr", "<td", "<meta"])
+    return any(marker in head for marker in ["<!doctype html", "<html", "<table", "<tr", "<td", "<meta"])
+
+
+def _parse_html_xls_bytes(raw: bytes, attempts: List[Dict[str, Any]]) -> Tuple[Optional[pd.DataFrame], Optional[str], Optional[str]]:
+    for encoding in ["cp1251", "utf-8", "utf-8-sig", "latin1"]:
+        try:
+            html_text = raw.decode(encoding)
+        except Exception as err:
+            attempts.append({"parser": "html_table", "encoding": encoding, "status": "decode_failed", "error": str(err)})
+            continue
+
+        try:
+            tables = pd.read_html(StringIO(html_text))
+            if not tables:
+                raise ValueError("HTML-таблицы не найдены.")
+            attempts.append(
+                {
+                    "parser": "html_table",
+                    "encoding": encoding,
+                    "status": "ok",
+                    "error": "",
+                    "tables_found": len(tables),
+                }
+            )
+            return _normalize_spreadsheet_df(tables[0]), encoding, None
+        except Exception as err:
+            attempts.append({"parser": "html_table", "encoding": encoding, "status": "failed", "error": str(err)})
+
+    return None, None, "Не удалось прочитать HTML-таблицы из XLS-экспорта."
 
 
 def _parse_xls_bytes(raw: bytes) -> Tuple[Optional[pd.DataFrame], Dict, Optional[str]]:
     attempts: List[Dict[str, Any]] = []
+    html_hint = _looks_like_html_xls(raw)
+
+    if html_hint:
+        df, encoding, html_err = _parse_html_xls_bytes(raw, attempts)
+        if df is not None:
+            info = {
+                "encoding": encoding,
+                "delimiter": None,
+                "header_row_index": None,
+                "attempts": attempts,
+                "html_hint": True,
+            }
+            return df, info, None
+    else:
+        try:
+            df = pd.read_excel(BytesIO(raw))
+            attempts.append({"parser": "legacy_excel", "status": "ok", "error": ""})
+            info = {"encoding": None, "delimiter": None, "header_row_index": None, "attempts": attempts, "html_hint": False}
+            return _normalize_spreadsheet_df(df), info, None
+        except Exception as err:
+            attempts.append({"parser": "legacy_excel", "status": "failed", "error": str(err)})
 
     try:
         df = pd.read_excel(BytesIO(raw))
         attempts.append({"parser": "legacy_excel", "status": "ok", "error": ""})
-        info = {"encoding": None, "delimiter": None, "header_row_index": None, "attempts": attempts}
+        info = {"encoding": None, "delimiter": None, "header_row_index": None, "attempts": attempts, "html_hint": html_hint}
         return _normalize_spreadsheet_df(df), info, None
     except Exception as err:
         attempts.append({"parser": "legacy_excel", "status": "failed", "error": str(err)})
 
-    html_hint = _looks_like_html_xls(raw)
-    try:
-        tables = pd.read_html(BytesIO(raw))
-        if not tables:
-            raise ValueError("HTML-таблицы не найдены.")
-        df = tables[0]
-        attempts.append({"parser": "html_table", "status": "ok", "error": "", "tables_found": len(tables)})
-        info = {
-            "encoding": None,
-            "delimiter": None,
-            "header_row_index": None,
-            "attempts": attempts,
-            "html_hint": html_hint,
-        }
-        return _normalize_spreadsheet_df(df), info, None
-    except Exception as err:
-        attempts.append({"parser": "html_table", "status": "failed", "error": str(err), "html_hint": html_hint})
+    if not html_hint:
+        df, encoding, html_err = _parse_html_xls_bytes(raw, attempts)
+        if df is not None:
+            info = {
+                "encoding": encoding,
+                "delimiter": None,
+                "header_row_index": None,
+                "attempts": attempts,
+                "html_hint": False,
+            }
+            return df, info, None
 
     return (
         None,
