@@ -180,17 +180,29 @@ with tab_upload:
             df_kpi = prepare_kpi_df(parsed_df, mapping, report_type)
             save_loaded_report(report_type, parsed_df, df_kpi, parse_info, mapping)
             st.success(f"{uploaded_file.name}: Saved report: {report_type} ({parsed_df.shape[0]}, {parsed_df.shape[1]})")
-            processed_previews.append((uploaded_file.name, report_type, parsed_df))
+            processed_previews.append((uploaded_file.name, report_type, parsed_df, parse_info))
 
         if processed_previews:
             st.subheader("Preview данных")
-            for file_name, report_type, parsed_df in processed_previews:
+            for file_name, report_type, parsed_df, parse_info in processed_previews:
                 with st.expander(f"{file_name} → {report_type}", expanded=False):
                     preview_df = parsed_df.head(50).copy().where(pd.notna(parsed_df.head(50)), "")
                     if format_money_preview:
                         preview_df = format_money_columns_for_display(preview_df)
                     preview_df = _ensure_unique_preview_columns(preview_df)
                     st.dataframe(preview_df, use_container_width=True)
+
+            st.subheader("Debug parsing info")
+            for file_name, report_type, _parsed_df, parse_info in processed_previews:
+                with st.expander(f"Debug: {file_name} → {report_type}", expanded=False):
+                    st.json(
+                        {
+                            "file_name": file_name,
+                            "report_type": report_type,
+                            "parse_info": parse_info,
+                        },
+                        expanded=False,
+                    )
     else:
         loaded = [k for k in ["waiters", "revenue_by_day", "food_usage"] if k in st.session_state]
         if loaded:
