@@ -22,7 +22,7 @@ from backend.utils.normalize import normalize_number_series
 st.set_page_config(page_title="FVA Analytic", layout="wide")
 
 st.title("FVA Analytic — MVP")
-st.write("Загрузите отчёт R-Keeper/1C в формате CSV или XLSX.")
+st.write("Загрузите отчёт R-Keeper/1C в формате CSV, XLSX или XLS.")
 
 diagnostics_mode = st.sidebar.checkbox("Diagnostics mode", value=False)
 format_money_preview = st.sidebar.checkbox("Format money columns", value=True)
@@ -127,7 +127,7 @@ tab_upload, tab_waiters, tab_revenue, tab_food, tab_diag = st.tabs(
 with tab_upload:
     uploaded_files = st.file_uploader(
         "Файл отчета",
-        type=["csv", "xlsx"],
+        type=["csv", "xlsx", "xls"],
         accept_multiple_files=True,
         key="main_uploader",
     )
