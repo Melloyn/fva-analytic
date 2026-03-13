@@ -728,7 +728,7 @@ def parse_csv_bytes(raw: bytes) -> Tuple[Optional[pd.DataFrame], Dict, Optional[
         is_unnamed = c_norm.startswith("unnamed:") or c_norm == ""
         if not is_unnamed:
             continue
-        if is_blank_series(df[c]).all():
+        if is_blank_series(_get_series_by_name(df, c)).all():
             drop_cols.append(c)
     if drop_cols:
         df = df.drop(columns=drop_cols, errors="ignore")
@@ -814,6 +814,17 @@ def find_column_by_priority(df: pd.DataFrame, priorities: List[str]) -> Optional
     return None
 
 
+def _get_series_by_name(df: pd.DataFrame, column_name: str) -> pd.Series:
+    if column_name not in df.columns:
+        return pd.Series(index=df.index, dtype="object")
+    selected = df[column_name]
+    if isinstance(selected, pd.DataFrame):
+        if selected.shape[1] == 0:
+            return pd.Series(index=df.index, dtype="object")
+        return selected.iloc[:, 0]
+    return selected
+
+
 def numeric_candidate_score(series: pd.Series) -> Tuple[int, int, float]:
     s = series.astype(str)
     s = s.str.replace("\u00A0", "", regex=False)
@@ -851,12 +862,12 @@ def choose_revenue_source(df: pd.DataFrame, priorities: List[str]) -> Optional[s
 
     # Respect priority when it has meaningful numeric payload.
     for c in candidates:
-        nonzero_count, valid_count, total_sum = numeric_candidate_score(df[c])
+        nonzero_count, valid_count, total_sum = numeric_candidate_score(_get_series_by_name(df, c))
         if nonzero_count > 0 and valid_count > 10 and total_sum > 0:
             return c
 
     # Fallback: choose strongest numeric candidate.
-    best = max(candidates, key=lambda c: numeric_candidate_score(df[c]))
+    best = max(candidates, key=lambda c: numeric_candidate_score(_get_series_by_name(df, c)))
     return best
 
 
@@ -888,13 +899,14 @@ def find_best_revenue_fallback(df: pd.DataFrame) -> Optional[str]:
 
     scored: List[Tuple[Tuple[int, int, float, float], str]] = []
     for c in candidates:
-        numeric = normalize_number_series(df[c])
+        series = _get_series_by_name(df, c)
+        numeric = normalize_number_series(series)
         nonzero = int((numeric > 0).sum())
         valid = int(numeric.notna().sum())
         total = float(numeric.sum())
         if nonzero < 5 or total <= 0:
             continue
-        if looks_like_id_column(df[c]):
+        if looks_like_id_column(series):
             continue
         # Prefer columns with larger sums, then more non-zero rows.
         score = (1, nonzero, total, float(numeric.max()))
@@ -932,7 +944,7 @@ def build_mapping(df: pd.DataFrame, report_type: str) -> Dict[str, Optional[str]
     # Revenue safeguard: if mapped source is empty/zero, fallback to strongest numeric money-like column.
     selected_revenue = common.get("revenue")
     if selected_revenue and selected_revenue in df.columns:
-        selected_revenue_num = normalize_number_series(df[selected_revenue])
+        selected_revenue_num = normalize_number_series(_get_series_by_name(df, selected_revenue))
         if float(selected_revenue_num.sum()) <= 0 or int((selected_revenue_num > 0).sum()) < 5:
             fallback_revenue = find_best_revenue_fallback(df)
             if fallback_revenue:
@@ -979,7 +991,7 @@ def apply_canonical_mapping(parsed_df: pd.DataFrame, mapping: Dict[str, Optional
             continue
         # Keep original source columns to avoid collisions when one source
         # is reused by several canonical targets (e.g. revenue + payment_type).
-        df_kpi[canonical] = parsed_df[source]
+        df_kpi[canonical] = _get_series_by_name(parsed_df, source)
     return df_kpi
 
 

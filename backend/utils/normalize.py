@@ -13,6 +13,10 @@ def normalize_col_name(value: str) -> str:
 
 
 def normalize_number_series(s: pd.Series) -> pd.Series:
+    if isinstance(s, pd.DataFrame):
+        if s.shape[1] == 0:
+            return pd.Series(dtype="float64")
+        s = s.iloc[:, 0]
     s = s.astype(str)
     s = s.str.replace("\u00A0", "", regex=False)
     s = s.str.replace("\u202F", "", regex=False)
