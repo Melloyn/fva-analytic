@@ -1090,39 +1090,6 @@ def _small_text_quality_score(text: str) -> int:
     return cyr - mojibake * 4
 
 
-def _mojibake_marker_count(text: str) -> int:
-    sample = text[:20000]
-    return (
-        sample.count("Äàòà")
-        + sample.count("Ð")
-        + sample.count("Ñ")
-        + len(re.findall(r"[ÃÄÅÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß]", sample))
-    )
-
-
-def _repair_html_text_if_needed(html_text: str) -> str:
-    base_score = _text_quality_score(html_text)
-    base_markers = _mojibake_marker_count(html_text)
-    if base_markers == 0 and base_score >= 0:
-        return html_text
-
-    best = html_text
-    best_score = base_score
-    best_markers = base_markers
-    for src, dst in [("latin1", "cp1251"), ("latin1", "utf-8"), ("cp1251", "utf-8")]:
-        try:
-            candidate = html_text.encode(src).decode(dst)
-        except Exception:
-            continue
-        candidate_score = _text_quality_score(candidate)
-        candidate_markers = _mojibake_marker_count(candidate)
-        if candidate_markers < best_markers and candidate_score > best_score + 5:
-            best = candidate
-            best_score = candidate_score
-            best_markers = candidate_markers
-    return best
-
-
 def _repair_mojibake_text(value: Any) -> Any:
     if not isinstance(value, str):
         return value
@@ -1361,9 +1328,6 @@ def _parse_html_xls_bytes(raw: bytes, attempts: List[Dict[str, Any]]) -> Tuple[O
         except Exception as err:
             attempts.append({"parser": "html_table", "encoding": encoding, "status": "decode_failed", "error": str(err)})
             continue
-        repaired_html_text = _repair_html_text_if_needed(html_text)
-        html_repaired = repaired_html_text != html_text
-        html_text = repaired_html_text
 
         try:
             extractor = _HTMLTableExtractor()
@@ -1384,7 +1348,6 @@ def _parse_html_xls_bytes(raw: bytes, attempts: List[Dict[str, Any]]) -> Tuple[O
                         "shape": list(normalized_df.shape),
                         "header_row_index": header_idx,
                         "quality": quality,
-                        "html_repaired": html_repaired,
                     }
                 )
                 if best_result is None or quality > best_result[2]:
@@ -1420,7 +1383,6 @@ def _parse_html_xls_bytes(raw: bytes, attempts: List[Dict[str, Any]]) -> Tuple[O
                     "tables_found": len(tables),
                     "header_row_index": best_header_idx,
                     "quality": quality,
-                    "html_repaired": html_repaired,
                 }
             )
             if best_result is None or quality > best_result[2]:
