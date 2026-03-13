@@ -918,14 +918,30 @@ def find_best_revenue_fallback(df: pd.DataFrame) -> Optional[str]:
     return scored[0][1]
 
 
-def detect_report_type(df: pd.DataFrame) -> str:
+def detect_report_type(df: pd.DataFrame, source_name: Optional[str] = None) -> str:
     ncols = [normalize_col_name(c) for c in df.columns]
+    source_norm = normalize_col_name(source_name or "")
     has_waiter = any("официант" in c or "waiter" in c for c in ncols)
     has_check = any("номер чека" in c or c == "чек" for c in ncols)
     has_date = any(c == "дата" or " date" in f" {c}" for c in ncols)
     has_revenue = any(("сумма" in c) or ("выручка" in c) or ("итого" in c) or ("revenue" in c) for c in ncols)
     has_dish = any(("блюдо" in c) or ("наименование" in c) or ("товар" in c) or ("позиция" in c) for c in ncols)
     has_qty = any(("количество" in c) or ("кол-во" in c) or (c == "расход") for c in ncols)
+    has_paid = any(("оплач" in c) or ("paid" in c) for c in ncols)
+    has_category = any(("категор" in c) or ("category" in c) for c in ncols)
+    has_station = any(("станц" in c) or ("касса" in c) or ("station" in c) or ("место" in c) for c in ncols)
+    has_guests = any(("гостей" in c) or ("гости" in c) or ("guests" in c) for c in ncols)
+    has_checks_count = any(("чеков" in c) or ("checks" in c) or ("кол-во чеков" in c) for c in ncols)
+
+    # Distinct HTML/XLS report classes to avoid collapsing unrelated uploads into "unknown".
+    if has_waiter and has_dish and has_qty and (has_revenue or has_paid):
+        return "waiters_dishes_sales"
+    if has_category and has_dish and has_qty and (has_revenue or has_paid):
+        return "sales_by_categories"
+    if has_date and (has_revenue or has_paid) and has_station:
+        return "revenue_by_stations_by_day"
+    if has_date and (has_revenue or has_paid) and (has_checks_count or has_guests):
+        return "revenue_checks_by_day"
 
     if has_waiter and has_check:
         return "waiters"
@@ -933,6 +949,16 @@ def detect_report_type(df: pd.DataFrame) -> str:
         return "revenue_by_day"
     if has_dish and has_qty:
         return "food_usage"
+
+    # Secondary safeguard for noisy HTML headers when business columns are not cleanly extracted.
+    if "stations" in source_norm and "day" in source_norm:
+        return "revenue_by_stations_by_day"
+    if "checks" in source_norm and "day" in source_norm:
+        return "revenue_checks_by_day"
+    if "waiters" in source_norm and "dishes" in source_norm:
+        return "waiters_dishes_sales"
+    if "categories" in source_norm:
+        return "sales_by_categories"
     return "unknown"
 
 
@@ -964,7 +990,7 @@ def build_mapping(df: pd.DataFrame, report_type: str) -> Dict[str, Optional[str]
                 "guests": find_column_by_priority(df, ["гостей", "гости", "guests"]),
             }
         )
-    elif report_type == "revenue_by_day":
+    elif report_type in {"revenue_by_day", "revenue_checks_by_day", "revenue_by_stations_by_day"}:
         common.update(
             {
                 "date": find_column_by_priority(df, ["дата", "date"]),
@@ -973,7 +999,7 @@ def build_mapping(df: pd.DataFrame, report_type: str) -> Dict[str, Optional[str]
                 "payment_type": find_column_by_priority(df, ["код", "валюта", "payment", "type"]),
             }
         )
-    elif report_type == "food_usage":
+    elif report_type in {"food_usage", "sales_by_categories", "waiters_dishes_sales"}:
         common.update(
             {
                 "dish": find_column_by_priority(df, ["блюдо", "наименование", "товар", "позиция", "dish"]),
@@ -981,6 +1007,8 @@ def build_mapping(df: pd.DataFrame, report_type: str) -> Dict[str, Optional[str]
                 "station": find_column_by_priority(df, ["цех", "станция", "подразделение", "категория", "группа"]),
             }
         )
+        if report_type == "waiters_dishes_sales":
+            common["waiter"] = find_column_by_priority(df, ["официант", "waiter"])
     return common
 
 

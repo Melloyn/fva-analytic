@@ -165,7 +165,7 @@ with tab_upload:
                 st.error(f"{uploaded_file.name}: {load_error or 'Не удалось загрузить файл.'}")
                 continue
 
-            report_type = detect_report_type(parsed_df)
+            report_type = detect_report_type(parsed_df, uploaded_file.name)
             mapping = build_mapping(parsed_df, report_type)
 
 
