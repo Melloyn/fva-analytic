@@ -1097,80 +1097,6 @@ def _looks_like_html_xls(raw: bytes) -> bool:
     return any(marker in head for marker in ["<!doctype html", "<html", "<table", "<tr", "<td", "<meta"])
 
 
-def _extract_declared_html_charset(raw: bytes) -> Optional[str]:
-    head = raw[:8192].decode("latin1", errors="ignore")
-    m = re.search(r"charset\s*=\s*['\"]?\s*([A-Za-z0-9_\-]+)", head, flags=re.IGNORECASE)
-    if not m:
-        return None
-    return m.group(1).strip().lower()
-
-
-def _header_keyword_score(cells: List[str]) -> int:
-    keywords = [
-        "дата", "категор", "блюдо", "код", "кол-во", "количество",
-        "сумма", "оплач", "официант", "чеков", "гостей", "касса",
-        "станц", "место",
-    ]
-    score = 0
-    for cell in cells:
-        norm = normalize_col_name(cell)
-        if not norm:
-            continue
-        if any(key in norm for key in keywords):
-            score += 1
-    return score
-
-
-def _promote_html_header(df: pd.DataFrame) -> Tuple[pd.DataFrame, Optional[int]]:
-    if df.empty:
-        return df, None
-
-    scan_limit = min(len(df), 12)
-    best_idx: Optional[int] = None
-    best_score = -1
-    best_non_empty = -1
-
-    for idx in range(scan_limit):
-        row = [_clean_cell(v) for v in df.iloc[idx].tolist()]
-        non_empty = sum(1 for v in row if v)
-        if non_empty < 2:
-            continue
-        keyword_score = _header_keyword_score(row)
-        text_like = sum(1 for v in row if v and _to_float(v) is None)
-        penalty = 2 if any(normalize_col_name(v).startswith("дата ") and ":" in str(v).lower() for v in row) else 0
-        score = keyword_score * 10 + text_like - penalty
-        if score > best_score or (score == best_score and non_empty > best_non_empty):
-            best_idx = idx
-            best_score = score
-            best_non_empty = non_empty
-
-    if best_idx is None or best_score < 10:
-        return df, None
-
-    header = [_clean_cell(v) for v in df.iloc[best_idx].tolist()]
-    body = df.iloc[best_idx + 1 :].reset_index(drop=True).copy()
-    body.columns = header
-    return body, best_idx
-
-
-def _text_quality_score(text: str) -> int:
-    sample = text[:20000]
-    cyr = len(re.findall(r"[А-Яа-яЁё]", sample))
-    mojibake = len(re.findall(r"[ÃÄÅÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞßàáâãäåæçèéêëìíîï]", sample))
-    return cyr - mojibake * 3
-
-
-def _dataframe_quality_score(df: pd.DataFrame) -> int:
-    header_cells = [str(c) for c in df.columns]
-    head_values: List[str] = []
-    if not df.empty:
-        head_values = [str(v) for v in df.head(8).fillna("").to_numpy().flatten().tolist()]
-    header_score = _header_keyword_score(header_cells) * 30
-    cyr = len(re.findall(r"[А-Яа-яЁё]", " ".join(header_cells + head_values)[:12000]))
-    mojibake = len(re.findall(r"[ÃÄÅÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞßàáâãäåæçèéêëìíîï]", " ".join(header_cells + head_values)[:12000]))
-    return header_score + cyr - mojibake * 5
-
-
 class _HTMLTableExtractor(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
@@ -1232,34 +1158,16 @@ def _select_best_html_table(tables: List[List[List[str]]]) -> Optional[pd.DataFr
         if score <= best_score:
             continue
 
-        candidate = pd.DataFrame(normalized_rows)
-        candidate, header_idx = _promote_html_header(candidate)
-        quality_bonus = _dataframe_quality_score(candidate) if candidate is not None and not candidate.empty else 0
-        total_score = score + quality_bonus + (15 if header_idx is not None else 0)
-        if total_score <= best_score:
-            continue
-
-        best_score = total_score
-        if candidate is not None and not candidate.empty:
-            best_df = candidate
-        else:
-            header = normalized_rows[0]
-            body = normalized_rows[1:] if len(normalized_rows) > 1 else []
-            best_df = pd.DataFrame(body, columns=header)
+        best_score = score
+        header = normalized_rows[0]
+        body = normalized_rows[1:] if len(normalized_rows) > 1 else []
+        best_df = pd.DataFrame(body, columns=header)
 
     return best_df
 
 
 def _parse_html_xls_bytes(raw: bytes, attempts: List[Dict[str, Any]]) -> Tuple[Optional[pd.DataFrame], Optional[str], Optional[str]]:
-    declared_charset = _extract_declared_html_charset(raw)
-    encodings: List[str] = []
-    for enc in [declared_charset, "utf-8", "utf-8-sig", "cp1251", "latin1"]:
-        if enc and enc not in encodings:
-            encodings.append(enc)
-
-    best_result: Optional[Tuple[pd.DataFrame, str, int]] = None
-
-    for encoding in encodings:
+    for encoding in ["utf-8", "utf-8-sig", "cp1251", "latin1"]:
         try:
             html_text = raw.decode(encoding)
         except Exception as err:
@@ -1272,9 +1180,6 @@ def _parse_html_xls_bytes(raw: bytes, attempts: List[Dict[str, Any]]) -> Tuple[O
             extractor.close()
             df = _select_best_html_table(extractor.tables)
             if df is not None and not df.empty:
-                promoted_df, header_idx = _promote_html_header(df)
-                normalized_df = _normalize_spreadsheet_df(promoted_df if promoted_df is not None and not promoted_df.empty else df)
-                quality = _text_quality_score(html_text) + _dataframe_quality_score(normalized_df)
                 attempts.append(
                     {
                         "parser": "html_custom",
@@ -1282,13 +1187,10 @@ def _parse_html_xls_bytes(raw: bytes, attempts: List[Dict[str, Any]]) -> Tuple[O
                         "status": "ok",
                         "error": "",
                         "tables_found": len(extractor.tables),
-                        "shape": list(normalized_df.shape),
-                        "header_row_index": header_idx,
-                        "quality": quality,
+                        "shape": list(df.shape),
                     }
                 )
-                if best_result is None or quality > best_result[2]:
-                    best_result = (normalized_df, encoding, quality)
+                return _normalize_spreadsheet_df(df), encoding, None
             raise ValueError("Подходящая HTML-таблица не найдена.")
         except Exception as err:
             attempts.append({"parser": "html_custom", "encoding": encoding, "status": "failed", "error": str(err)})
@@ -1297,20 +1199,6 @@ def _parse_html_xls_bytes(raw: bytes, attempts: List[Dict[str, Any]]) -> Tuple[O
             tables = pd.read_html(StringIO(html_text))
             if not tables:
                 raise ValueError("HTML-таблицы не найдены.")
-            best_df: Optional[pd.DataFrame] = None
-            best_table_quality = -10**9
-            best_header_idx: Optional[int] = None
-            for table in tables:
-                promoted_df, header_idx = _promote_html_header(table)
-                normalized_df = _normalize_spreadsheet_df(promoted_df if promoted_df is not None and not promoted_df.empty else table)
-                table_quality = _dataframe_quality_score(normalized_df)
-                if table_quality > best_table_quality:
-                    best_table_quality = table_quality
-                    best_df = normalized_df
-                    best_header_idx = header_idx
-            if best_df is None or best_df.empty:
-                raise ValueError("HTML-таблицы не содержат пригодных данных.")
-            quality = _text_quality_score(html_text) + best_table_quality
             attempts.append(
                 {
                     "parser": "html_table",
@@ -1318,17 +1206,12 @@ def _parse_html_xls_bytes(raw: bytes, attempts: List[Dict[str, Any]]) -> Tuple[O
                     "status": "ok",
                     "error": "",
                     "tables_found": len(tables),
-                    "header_row_index": best_header_idx,
-                    "quality": quality,
                 }
             )
-            if best_result is None or quality > best_result[2]:
-                best_result = (best_df, encoding, quality)
+            return _normalize_spreadsheet_df(tables[0]), encoding, None
         except Exception as err:
             attempts.append({"parser": "html_table", "encoding": encoding, "status": "failed", "error": str(err)})
 
-    if best_result is not None:
-        return best_result[0], best_result[1], None
     return None, None, "Не удалось прочитать HTML-таблицы из XLS-экспорта."
 
 
