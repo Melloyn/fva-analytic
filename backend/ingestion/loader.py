@@ -1,5 +1,7 @@
 import re
 import csv
+from html import unescape
+from html.parser import HTMLParser
 from io import BytesIO
 from io import StringIO
 from collections import Counter
@@ -1048,13 +1050,103 @@ def _looks_like_html_xls(raw: bytes) -> bool:
     return any(marker in head for marker in ["<!doctype html", "<html", "<table", "<tr", "<td", "<meta"])
 
 
+class _HTMLTableExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.tables: List[List[List[str]]] = []
+        self._table_stack = 0
+        self._current_table: Optional[List[List[str]]] = None
+        self._current_row: Optional[List[str]] = None
+        self._current_cell: Optional[List[str]] = None
+
+    def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+        tag = tag.lower()
+        if tag == "table":
+            self._table_stack += 1
+            if self._table_stack == 1:
+                self._current_table = []
+        elif tag == "tr" and self._table_stack == 1:
+            self._current_row = []
+        elif tag in {"td", "th"} and self._table_stack == 1 and self._current_row is not None:
+            self._current_cell = []
+        elif tag == "br" and self._current_cell is not None:
+            self._current_cell.append(" ")
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if tag in {"td", "th"} and self._current_cell is not None and self._current_row is not None:
+            cell = _clean_cell(unescape("".join(self._current_cell)))
+            self._current_row.append(cell)
+            self._current_cell = None
+        elif tag == "tr" and self._table_stack == 1 and self._current_row is not None and self._current_table is not None:
+            self._current_table.append(self._current_row)
+            self._current_row = None
+        elif tag == "table" and self._table_stack > 0:
+            if self._table_stack == 1 and self._current_table is not None:
+                self.tables.append(self._current_table)
+                self._current_table = None
+            self._table_stack -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self._current_cell is not None:
+            self._current_cell.append(data)
+
+
+def _select_best_html_table(tables: List[List[List[str]]]) -> Optional[pd.DataFrame]:
+    best_df: Optional[pd.DataFrame] = None
+    best_score = -1
+
+    for table in tables:
+        cleaned_rows = [_trim_trailing_blank([_clean_cell(cell) for cell in row]) for row in table]
+        cleaned_rows = [row for row in cleaned_rows if _has_meaningful_cells(row)]
+        if len(cleaned_rows) < 2:
+            continue
+        width = max((len(row) for row in cleaned_rows), default=0)
+        if width < 2:
+            continue
+
+        normalized_rows = [row + [""] * (width - len(row)) for row in cleaned_rows]
+        non_empty_cells = sum(1 for row in normalized_rows for cell in row if _clean_cell(cell))
+        score = len(normalized_rows) * width + non_empty_cells
+        if score <= best_score:
+            continue
+
+        best_score = score
+        header = normalized_rows[0]
+        body = normalized_rows[1:] if len(normalized_rows) > 1 else []
+        best_df = pd.DataFrame(body, columns=header)
+
+    return best_df
+
+
 def _parse_html_xls_bytes(raw: bytes, attempts: List[Dict[str, Any]]) -> Tuple[Optional[pd.DataFrame], Optional[str], Optional[str]]:
-    for encoding in ["cp1251", "utf-8", "utf-8-sig", "latin1"]:
+    for encoding in ["utf-8", "utf-8-sig", "cp1251", "latin1"]:
         try:
             html_text = raw.decode(encoding)
         except Exception as err:
             attempts.append({"parser": "html_table", "encoding": encoding, "status": "decode_failed", "error": str(err)})
             continue
+
+        try:
+            extractor = _HTMLTableExtractor()
+            extractor.feed(html_text)
+            extractor.close()
+            df = _select_best_html_table(extractor.tables)
+            if df is not None and not df.empty:
+                attempts.append(
+                    {
+                        "parser": "html_custom",
+                        "encoding": encoding,
+                        "status": "ok",
+                        "error": "",
+                        "tables_found": len(extractor.tables),
+                        "shape": list(df.shape),
+                    }
+                )
+                return _normalize_spreadsheet_df(df), encoding, None
+            raise ValueError("Подходящая HTML-таблица не найдена.")
+        except Exception as err:
+            attempts.append({"parser": "html_custom", "encoding": encoding, "status": "failed", "error": str(err)})
 
         try:
             tables = pd.read_html(StringIO(html_text))
@@ -1081,7 +1173,7 @@ def _parse_xls_bytes(raw: bytes) -> Tuple[Optional[pd.DataFrame], Dict, Optional
     html_hint = _looks_like_html_xls(raw)
 
     if html_hint:
-        df, encoding, html_err = _parse_html_xls_bytes(raw, attempts)
+        df, encoding, _html_err = _parse_html_xls_bytes(raw, attempts)
         if df is not None:
             info = {
                 "encoding": encoding,
@@ -1100,16 +1192,8 @@ def _parse_xls_bytes(raw: bytes) -> Tuple[Optional[pd.DataFrame], Dict, Optional
         except Exception as err:
             attempts.append({"parser": "legacy_excel", "status": "failed", "error": str(err)})
 
-    try:
-        df = pd.read_excel(BytesIO(raw))
-        attempts.append({"parser": "legacy_excel", "status": "ok", "error": ""})
-        info = {"encoding": None, "delimiter": None, "header_row_index": None, "attempts": attempts, "html_hint": html_hint}
-        return _normalize_spreadsheet_df(df), info, None
-    except Exception as err:
-        attempts.append({"parser": "legacy_excel", "status": "failed", "error": str(err)})
-
     if not html_hint:
-        df, encoding, html_err = _parse_html_xls_bytes(raw, attempts)
+        df, encoding, _html_err = _parse_html_xls_bytes(raw, attempts)
         if df is not None:
             info = {
                 "encoding": encoding,
