@@ -119,6 +119,18 @@ def download_clean_df(report_type: str, df_kpi: pd.DataFrame):
     )
 
 
+def _ensure_unique_preview_columns(df: pd.DataFrame) -> pd.DataFrame:
+    preview = df.copy()
+    counts = {}
+    unique_cols = []
+    for idx, col in enumerate(preview.columns):
+        base = str(col).strip() or f"unnamed_{idx + 1}"
+        counts[base] = counts.get(base, 0) + 1
+        unique_cols.append(base if counts[base] == 1 else f"{base}__{counts[base]}")
+    preview.columns = unique_cols
+    return preview
+
+
 
 tab_upload, tab_waiters, tab_revenue, tab_food, tab_diag = st.tabs(
     ["Upload & Preview", "Waiters", "Revenue by day", "Food usage", "Diagnostics"]
@@ -177,6 +189,7 @@ with tab_upload:
                     preview_df = parsed_df.head(50).copy().where(pd.notna(parsed_df.head(50)), "")
                     if format_money_preview:
                         preview_df = format_money_columns_for_display(preview_df)
+                    preview_df = _ensure_unique_preview_columns(preview_df)
                     st.dataframe(preview_df, use_container_width=True)
     else:
         loaded = [k for k in ["waiters", "revenue_by_day", "food_usage"] if k in st.session_state]

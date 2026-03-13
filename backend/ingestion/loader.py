@@ -1041,10 +1041,17 @@ def prepare_kpi_df(parsed_df: pd.DataFrame, mapping: Dict[str, Optional[str]], r
 
 def _normalize_spreadsheet_df(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    df.columns = [
+    raw_columns = [
         re.sub(r"\s+", " ", str(c).replace("\u00A0", " ").replace("\u202F", " ").strip())
         for c in df.columns
     ]
+    counts: Dict[str, int] = {}
+    unique_columns: List[str] = []
+    for idx, col in enumerate(raw_columns):
+        base = col or f"unnamed_{idx + 1}"
+        counts[base] = counts.get(base, 0) + 1
+        unique_columns.append(base if counts[base] == 1 else f"{base}__{counts[base]}")
+    df.columns = unique_columns
     return df.dropna(how="all").reset_index(drop=True)
 
 
