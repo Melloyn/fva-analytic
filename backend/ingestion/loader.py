@@ -1083,69 +1083,6 @@ def _normalize_spreadsheet_df(df: pd.DataFrame) -> pd.DataFrame:
     return df.dropna(how="all").reset_index(drop=True)
 
 
-def _small_text_quality_score(text: str) -> int:
-    sample = text[:400]
-    cyr = len(re.findall(r"[А-Яа-яЁё]", sample))
-    mojibake = len(re.findall(r"[ÃÄÅÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞßàáâãäåæçèéêëìíîï]", sample))
-    return cyr - mojibake * 4
-
-
-def _repair_mojibake_text(value: Any) -> Any:
-    if not isinstance(value, str):
-        return value
-    original = _clean_cell(value)
-    if not original:
-        return original
-
-    best = original
-    best_score = _small_text_quality_score(original)
-    for src, dst in [("latin1", "cp1251"), ("latin1", "utf-8"), ("cp1251", "utf-8")]:
-        try:
-            candidate = original.encode(src).decode(dst)
-        except Exception:
-            continue
-        candidate = _clean_cell(candidate)
-        score = _small_text_quality_score(candidate)
-        if score > best_score + 1:
-            best = candidate
-            best_score = score
-    return best
-
-
-def _postprocess_html_table_df(df: pd.DataFrame) -> pd.DataFrame:
-    work = df.copy()
-    work.columns = [_repair_mojibake_text(str(c)) for c in work.columns]
-
-    for idx in range(work.shape[1]):
-        col = work.iloc[:, idx]
-        if pd.api.types.is_object_dtype(col) or pd.api.types.is_string_dtype(col):
-            work.iloc[:, idx] = col.map(_repair_mojibake_text)
-
-    current_header_score = _header_keyword_score([str(c) for c in work.columns])
-    best_idx: Optional[int] = None
-    best_score = current_header_score
-    for idx in range(min(len(work), 6)):
-        row = [_repair_mojibake_text(_clean_cell(v)) for v in work.iloc[idx].tolist()]
-        non_empty = sum(1 for v in row if v)
-        if non_empty < 2:
-            continue
-        row_score = _header_keyword_score(row)
-        is_period_row = any(normalize_col_name(v).startswith("дата ") and ":" in str(v).lower() for v in row)
-        if is_period_row:
-            continue
-        if row_score >= max(2, current_header_score + 1) and row_score > best_score:
-            best_idx = idx
-            best_score = row_score
-
-    if best_idx is not None:
-        header = [_repair_mojibake_text(_clean_cell(v)) for v in work.iloc[best_idx].tolist()]
-        body = work.iloc[best_idx + 1 :].reset_index(drop=True).copy()
-        body.columns = header
-        work = body
-
-    return _normalize_spreadsheet_df(work)
-
-
 def _parse_xlsx_bytes(raw: bytes) -> Tuple[Optional[pd.DataFrame], Dict, Optional[str]]:
     try:
         df = pd.read_excel(BytesIO(raw))
@@ -1168,11 +1105,81 @@ def _extract_declared_html_charset(raw: bytes) -> Optional[str]:
     return m.group(1).strip().lower()
 
 
+def _html_text_quality_score(text: str) -> int:
+    sample = text[:20000]
+    cyr = len(re.findall(r"[А-Яа-яЁё]", sample))
+    mojibake = (
+        sample.count("Äàòà")
+        + sample.count("Ð")
+        + sample.count("Ñ")
+        + len(re.findall(r"[ÃÄÅÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß]", sample))
+    )
+    return cyr - mojibake * 4
+
+
+def _mojibake_marker_count(text: str) -> int:
+    sample = text[:20000]
+    return (
+        sample.count("Äàòà")
+        + sample.count("Ð")
+        + sample.count("Ñ")
+        + len(re.findall(r"[ÃÄÅÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß]", sample))
+    )
+
+
+def _short_text_preview(text: str, limit: int = 300) -> str:
+    return re.sub(r"\s+", " ", text[:limit]).strip()
+
+
+def _rows_preview(df: pd.DataFrame, max_rows: int = 6, max_cols: int = 8) -> List[List[str]]:
+    preview: List[List[str]] = []
+    head = df.iloc[:max_rows, :max_cols].fillna("")
+    for row in head.to_numpy().tolist():
+        preview.append([_clean_cell(v) for v in row])
+    return preview
+
+
+def _repair_extracted_html_cell(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    text = _clean_cell(value)
+    if not text:
+        return text
+    
+    # Fast path: CP1251-decoded UTF-8 Cyrillic almost always contains Р or С
+    if "Р" not in text and "С" not in text:
+        return text
+
+    try:
+        # Strict encode/decode safely rejects all non-mojibake text
+        b = text.encode("cp1251")
+        # Fix missing И (D0 98) dropped by CP1251 undefined 0x98
+        b = re.sub(b"\xd0(?=[\xd0\xd1]|$)", b"\xd0\x98", b)
+        # Fix Р (D0 A0) NBSP replaced by space 0x20
+        b = b.replace(b"\xd0 ", b"\xd0\xa0")
+        candidate = b.decode("utf-8")
+        if candidate and candidate != text:
+            return _clean_cell(candidate)
+    except Exception:
+        pass
+
+    return text
+
+
+def _repair_extracted_html_df(df: pd.DataFrame) -> pd.DataFrame:
+    repaired = df.copy()
+    repaired.columns = [_repair_extracted_html_cell(str(c)) for c in repaired.columns]
+    for idx in range(repaired.shape[1]):
+        col = repaired.iloc[:, idx]
+        if pd.api.types.is_object_dtype(col) or pd.api.types.is_string_dtype(col):
+            repaired.iloc[:, idx] = col.map(_repair_extracted_html_cell)
+    return repaired
+
+
 def _header_keyword_score(cells: List[str]) -> int:
     keywords = [
-        "дата", "категор", "блюдо", "код", "кол-во", "количество",
-        "сумма", "оплач", "официант", "чеков", "гостей", "касса",
-        "станц", "место",
+        "дата", "чеков", "гостей", "сумма", "оплач", "официант",
+        "блюдо", "категор", "код", "кол-во", "станц", "касса", "место",
     ]
     score = 0
     for cell in cells:
@@ -1184,54 +1191,77 @@ def _header_keyword_score(cells: List[str]) -> int:
     return score
 
 
-def _promote_html_header(df: pd.DataFrame) -> Tuple[pd.DataFrame, Optional[int]]:
-    if df.empty:
+def _looks_like_period_title_row(cells: List[str]) -> bool:
+    normalized = [normalize_col_name(c) for c in cells if str(c).strip()]
+    if not normalized:
+        return False
+    return any(n.startswith("дата") and ":" in str(c).lower() for n, c in zip(normalized, cells) if str(c).strip())
+
+
+def _promote_html_header_row(df: pd.DataFrame) -> Tuple[pd.DataFrame, Optional[int]]:
+    current_header = [str(c) for c in df.columns]
+    current_score = _header_keyword_score(current_header)
+    needs_search = _looks_like_period_title_row(current_header) or current_score < 2
+    if not needs_search or df.empty:
         return df, None
 
-    scan_limit = min(len(df), 12)
     best_idx: Optional[int] = None
-    best_score = -1
-    best_non_empty = -1
-
-    for idx in range(scan_limit):
-        row = [_repair_mojibake_text(_clean_cell(v)) for v in df.iloc[idx].tolist()]
-        non_empty = sum(1 for v in row if v)
-        if non_empty < 2:
+    best_score = current_score
+    for idx in range(min(len(df), 6)):
+        row = [_clean_cell(v) for v in df.iloc[idx].tolist()]
+        if _looks_like_period_title_row(row):
             continue
-        keyword_score = _header_keyword_score(row)
-        text_like = sum(1 for v in row if v and _to_float(v) is None)
-        penalty = 2 if any(normalize_col_name(v).startswith("дата ") and ":" in str(v).lower() for v in row) else 0
-        score = keyword_score * 10 + text_like - penalty
-        if score > best_score or (score == best_score and non_empty > best_non_empty):
+        score = _header_keyword_score(row)
+        if score >= max(2, current_score + 1) and score > best_score:
             best_idx = idx
             best_score = score
-            best_non_empty = non_empty
 
-    if best_idx is None or best_score < 10:
+    if best_idx is None:
         return df, None
 
-    header = [_repair_mojibake_text(_clean_cell(v)) for v in df.iloc[best_idx].tolist()]
+    header = [_clean_cell(v) for v in df.iloc[best_idx].tolist()]
     body = df.iloc[best_idx + 1 :].reset_index(drop=True).copy()
     body.columns = header
     return body, best_idx
 
 
-def _text_quality_score(text: str) -> int:
-    sample = text[:20000]
-    cyr = len(re.findall(r"[А-Яа-яЁё]", sample))
-    mojibake = len(re.findall(r"[ÃÄÅÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞßàáâãäåæçèéêëìíîï]", sample))
-    return cyr - mojibake * 3
+def _repair_latin1_html_mojibake(html_text: str, encoding: str) -> Tuple[str, bool, Optional[str]]:
+    if encoding.lower() != "latin1":
+        return html_text, False, None
 
+    marker_count = _mojibake_marker_count(html_text)
+    if marker_count < 5:
+        return html_text, False, None
 
-def _dataframe_quality_score(df: pd.DataFrame) -> int:
-    header_cells = [str(c) for c in df.columns]
-    head_values: List[str] = []
-    if not df.empty:
-        head_values = [str(v) for v in df.head(8).fillna("").to_numpy().flatten().tolist()]
-    header_score = _header_keyword_score(header_cells) * 30
-    cyr = len(re.findall(r"[А-Яа-яЁё]", " ".join(header_cells + head_values)[:12000]))
-    mojibake = len(re.findall(r"[ÃÄÅÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞßàáâãäåæçèéêëìíîï]", " ".join(header_cells + head_values)[:12000]))
-    return header_score + cyr - mojibake * 5
+    base_score = _html_text_quality_score(html_text)
+    raw = html_text.encode("latin1")
+    attempts = [
+        ("latin1_to_cp1251", "strict"),
+        ("latin1_to_cp1251_ignore", "ignore"),
+        ("latin1_to_cp1251_replace", "replace"),
+    ]
+
+    best_text = html_text
+    best_score = base_score
+    best_path: Optional[str] = None
+    for path_name, error_mode in attempts:
+        try:
+            if error_mode == "strict":
+                candidate = raw.decode("cp1251")
+            else:
+                candidate = raw.decode("cp1251", errors=error_mode)
+        except Exception:
+            continue
+
+        candidate_score = _html_text_quality_score(candidate)
+        if candidate_score > best_score + 20:
+            best_text = candidate
+            best_score = candidate_score
+            best_path = path_name
+
+    if best_path is None:
+        return html_text, False, None
+    return best_text, True, best_path
 
 
 class _HTMLTableExtractor(HTMLParser):
@@ -1295,39 +1325,120 @@ def _select_best_html_table(tables: List[List[List[str]]]) -> Optional[pd.DataFr
         if score <= best_score:
             continue
 
-        candidate = pd.DataFrame(normalized_rows)
-        candidate, header_idx = _promote_html_header(candidate)
-        quality_bonus = _dataframe_quality_score(candidate) if candidate is not None and not candidate.empty else 0
-        total_score = score + quality_bonus + (15 if header_idx is not None else 0)
-        if total_score <= best_score:
-            continue
-
-        best_score = total_score
-        if candidate is not None and not candidate.empty:
-            best_df = candidate
-        else:
-            header = normalized_rows[0]
-            body = normalized_rows[1:] if len(normalized_rows) > 1 else []
-            best_df = pd.DataFrame(body, columns=header)
+        best_score = score
+        header = normalized_rows[0]
+        body = normalized_rows[1:] if len(normalized_rows) > 1 else []
+        best_df = pd.DataFrame(body, columns=header)
 
     return best_df
 
 
+def _realign_sparse_xls_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    R-Keeper HTML exports often drop the leading column (Date, Waiter, Station) on subsequent rows
+    belonging to the same group. This causes a left-shift of business columns.
+    We detect this missing leading cell, shift the row right, and forward-fill the leading column.
+    """
+    if df.empty or len(df.columns) < 3:
+        return df
+        
+    res = df.copy()
+    cols = [str(c).lower() for c in res.columns]
+    
+    # 1. Date grouping (revenue_checks_by_day, revenue_by_stations_by_day)
+    date_cols = [i for i, c in enumerate(cols) if "дата" in c or "date" in c]
+    if date_cols and date_cols[0] == 0:
+        def _is_date_cell(val: str) -> bool:
+            return bool(re.match(r"^\s*\d{2}\.\d{2}\.\d{4}\s*$", str(val).strip()[:10]))
+            
+        for i in range(len(res)):
+            val = str(res.iat[i, 0]).strip()
+            # If empty or is a shifted payload (like check number)
+            if val and not _is_date_cell(val) and val.lower() != "итого":
+                row_data = res.iloc[i].tolist()
+                if not str(row_data[-1]).strip():
+                    res.iloc[i] = [""] + row_data[:-1]
+                    
+        mask_itogo = res.iloc[:, 0].astype(str).str.strip().str.lower() == "итого"
+        res.loc[mask_itogo, res.columns[0]] = pd.NA
+        res.iloc[:, 0] = res.iloc[:, 0].replace(r"^\s*$", pd.NA, regex=True).ffill()
+        res.loc[mask_itogo, res.columns[0]] = "Итого"
+        return res
+
+    # 2. Waiter grouping (waiters_dishes_sales)
+    if "официант" in cols[0] or "waiter" in cols[0]:
+        for i in range(len(res)):
+            val = str(res.iat[i, 0]).strip()
+            # purely numeric normally means actual dish Code moved left
+            if (not val or val.replace(".", "").replace("-", "").replace(",", "").isdigit()) and val.lower() != "итого":
+                row_data = res.iloc[i].tolist()
+                if not str(row_data[-1]).strip():
+                    res.iloc[i] = [""] + row_data[:-1]
+                    
+        mask_itogo = res.iloc[:, 0].astype(str).str.strip().str.lower() == "итого"
+        res.loc[mask_itogo, res.columns[0]] = pd.NA
+        res.iloc[:, 0] = res.iloc[:, 0].replace(r"^\s*$", pd.NA, regex=True).ffill()
+        res.loc[mask_itogo, res.columns[0]] = "Итого"
+        return res
+
+    # 3. Category grouping (sales_by_categories)
+    if "сортировка" in cols[0] and len(cols) > 1 and "категория" in cols[1]:
+        for i in range(len(res)):
+            v0 = str(res.iat[i, 0]).strip()
+            v1 = str(res.iat[i, 1]).strip()
+            row_data = res.iloc[i].tolist()
+            if not v0 or v0.lower() == "итого" or not str(row_data[-1]).strip() == "":
+                continue
+            
+            # Shift by 2 if dish name shifted into Сортировка ("БОЙ Бокал...")
+            if not v0.isdigit() and v0.lower() != "итого":
+                if len(row_data) > 2 and not str(row_data[-1]).strip() and not str(row_data[-2]).strip():
+                    res.iloc[i] = ["", ""] + row_data[:-2]
+            # Shift by 1 if grouping shifted into Категория
+            elif v0.isdigit() and not v1:
+                res.iloc[i] = [row_data[0], ""] + row_data[1:-1]
+                
+        # Forward fill Category and Sort
+        for col_idx in [0, 1]:
+            mask_itogo = res.iloc[:, col_idx].astype(str).str.strip().str.lower() == "итого"
+            res.loc[mask_itogo, res.columns[col_idx]] = pd.NA
+            res.iloc[:, col_idx] = res.iloc[:, col_idx].replace(r"^\s*$", pd.NA, regex=True).ffill()
+            res.loc[mask_itogo, res.columns[col_idx]] = "Итого"
+        return res
+
+    return res
+
+
 def _parse_html_xls_bytes(raw: bytes, attempts: List[Dict[str, Any]]) -> Tuple[Optional[pd.DataFrame], Optional[str], Optional[str]]:
     declared_charset = _extract_declared_html_charset(raw)
-    encodings: List[str] = []
-    for enc in [declared_charset, "utf-8", "utf-8-sig", "cp1251", "latin1"]:
-        if enc and enc not in encodings:
-            encodings.append(enc)
-
-    best_result: Optional[Tuple[pd.DataFrame, str, int]] = None
-
-    for encoding in encodings:
+    best_result: Optional[Tuple[int, pd.DataFrame, str]] = None
+    for encoding in ["utf-8", "utf-8-sig", "cp1251", "latin1"]:
         try:
             html_text = raw.decode(encoding)
         except Exception as err:
-            attempts.append({"parser": "html_table", "encoding": encoding, "status": "decode_failed", "error": str(err)})
+            attempts.append(
+                {
+                    "parser": "html_table",
+                    "encoding": encoding,
+                    "declared_charset": declared_charset,
+                    "status": "decode_failed",
+                    "error": str(err),
+                }
+            )
             continue
+
+        html_text, html_repaired, repair_path = _repair_latin1_html_mojibake(html_text, encoding)
+
+        decode_debug = {
+            "encoding": encoding,
+            "declared_charset": declared_charset,
+            "html_preview": _short_text_preview(html_text),
+            "mojibake_markers": _mojibake_marker_count(html_text),
+            "text_quality": _html_text_quality_score(html_text),
+            "meta_charset_present": "charset" in html_text[:1000].lower(),
+            "html_repaired": html_repaired,
+            "repair_path": repair_path,
+        }
 
         try:
             extractor = _HTMLTableExtractor()
@@ -1335,105 +1446,134 @@ def _parse_html_xls_bytes(raw: bytes, attempts: List[Dict[str, Any]]) -> Tuple[O
             extractor.close()
             df = _select_best_html_table(extractor.tables)
             if df is not None and not df.empty:
-                promoted_df, header_idx = _promote_html_header(df)
-                normalized_df = _postprocess_html_table_df(promoted_df if promoted_df is not None and not promoted_df.empty else df)
-                quality = _text_quality_score(html_text) + _dataframe_quality_score(normalized_df)
+                df = _repair_extracted_html_df(df)
+                rows_preview_before_header_promotion = _rows_preview(df)
+                promoted_df, header_row_index = _promote_html_header_row(df)
+                normalized_df = _normalize_spreadsheet_df(promoted_df)
+                normalized_df = _realign_sparse_xls_dataframe(normalized_df)
+                selection_score = int(decode_debug["text_quality"]) - int(decode_debug["mojibake_markers"]) * 10
+                if declared_charset and encoding.lower() == declared_charset.lower():
+                    selection_score += 100
                 attempts.append(
                     {
                         "parser": "html_custom",
-                        "encoding": encoding,
+                        **decode_debug,
                         "status": "ok",
                         "error": "",
                         "tables_found": len(extractor.tables),
-                        "shape": list(normalized_df.shape),
-                        "header_row_index": header_idx,
-                        "quality": quality,
+                        "shape": list(df.shape),
+                        "selected_header_source": "table_header_row_0",
+                        "header_row_index": header_row_index,
+                        "rows_preview_before_header_promotion": rows_preview_before_header_promotion,
+                        "columns_before_normalization_preview": [str(c) for c in list(df.columns)[:12]],
+                        "columns_after_normalization_preview": [str(c) for c in list(normalized_df.columns)[:12]],
+                        "selection_score": selection_score,
                     }
                 )
-                if best_result is None or quality > best_result[2]:
-                    best_result = (normalized_df, encoding, quality)
+                if best_result is None or selection_score > best_result[0]:
+                    best_result = (selection_score, normalized_df, encoding)
             raise ValueError("Подходящая HTML-таблица не найдена.")
         except Exception as err:
-            attempts.append({"parser": "html_custom", "encoding": encoding, "status": "failed", "error": str(err)})
+            attempts.append({"parser": "html_custom", **decode_debug, "status": "failed", "error": str(err)})
 
         try:
             tables = pd.read_html(StringIO(html_text))
             if not tables:
                 raise ValueError("HTML-таблицы не найдены.")
-            best_df: Optional[pd.DataFrame] = None
-            best_table_quality = -10**9
-            best_header_idx: Optional[int] = None
-            for table in tables:
-                promoted_df, header_idx = _promote_html_header(table)
-                normalized_df = _postprocess_html_table_df(promoted_df if promoted_df is not None and not promoted_df.empty else table)
-                table_quality = _dataframe_quality_score(normalized_df)
-                if table_quality > best_table_quality:
-                    best_table_quality = table_quality
-                    best_df = normalized_df
-                    best_header_idx = header_idx
-            if best_df is None or best_df.empty:
-                raise ValueError("HTML-таблицы не содержат пригодных данных.")
-            quality = _text_quality_score(html_text) + best_table_quality
+            table_df = _repair_extracted_html_df(tables[0])
+            rows_preview_before_header_promotion = _rows_preview(table_df)
+            promoted_df, header_row_index = _promote_html_header_row(table_df)
+            normalized_df = _normalize_spreadsheet_df(promoted_df)
+            normalized_df = _realign_sparse_xls_dataframe(normalized_df)
+            selection_score = int(decode_debug["text_quality"]) - int(decode_debug["mojibake_markers"]) * 10
+            if declared_charset and encoding.lower() == declared_charset.lower():
+                selection_score += 100
             attempts.append(
                 {
                     "parser": "html_table",
-                    "encoding": encoding,
+                    **decode_debug,
                     "status": "ok",
                     "error": "",
                     "tables_found": len(tables),
-                    "header_row_index": best_header_idx,
-                    "quality": quality,
+                    "shape": list(table_df.shape),
+                    "selected_header_source": "pandas_html_header",
+                    "header_row_index": header_row_index,
+                    "rows_preview_before_header_promotion": rows_preview_before_header_promotion,
+                    "columns_before_normalization_preview": [str(c) for c in list(table_df.columns)[:12]],
+                    "columns_after_normalization_preview": [str(c) for c in list(normalized_df.columns)[:12]],
+                    "selection_score": selection_score,
                 }
             )
-            if best_result is None or quality > best_result[2]:
-                best_result = (best_df, encoding, quality)
+            if best_result is None or selection_score > best_result[0]:
+                best_result = (selection_score, normalized_df, encoding)
         except Exception as err:
-            attempts.append({"parser": "html_table", "encoding": encoding, "status": "failed", "error": str(err)})
+            attempts.append({"parser": "html_table", **decode_debug, "status": "failed", "error": str(err)})
 
     if best_result is not None:
-        return best_result[0], best_result[1], None
+        return best_result[1], best_result[2], None
     return None, None, "Не удалось прочитать HTML-таблицы из XLS-экспорта."
 
 
 def _parse_xls_bytes(raw: bytes) -> Tuple[Optional[pd.DataFrame], Dict, Optional[str]]:
     attempts: List[Dict[str, Any]] = []
     html_hint = _looks_like_html_xls(raw)
+    declared_charset = _extract_declared_html_charset(raw) if html_hint else None
 
     if html_hint:
         df, encoding, _html_err = _parse_html_xls_bytes(raw, attempts)
         if df is not None:
+            detected_type = detect_report_type(df)
             info = {
                 "encoding": encoding,
+                "declared_charset": declared_charset,
                 "delimiter": None,
                 "header_row_index": None,
                 "attempts": attempts,
                 "html_hint": True,
+                "columns_preview": [str(c) for c in list(df.columns)[:12]],
+                "detected_report_type": detected_type,
+                "detected_report_type_raw": detected_type,
             }
             return df, info, None
     else:
         try:
             df = pd.read_excel(BytesIO(raw))
             attempts.append({"parser": "legacy_excel", "status": "ok", "error": ""})
-            info = {"encoding": None, "delimiter": None, "header_row_index": None, "attempts": attempts, "html_hint": False}
-            return _normalize_spreadsheet_df(df), info, None
+            df = _normalize_spreadsheet_df(df)
+            detected_type = detect_report_type(df)
+            info = {
+                "encoding": None, 
+                "delimiter": None, 
+                "header_row_index": None, 
+                "attempts": attempts, 
+                "html_hint": False,
+                "detected_report_type": detected_type,
+                "detected_report_type_raw": detected_type,
+            }
+            return df, info, None
         except Exception as err:
             attempts.append({"parser": "legacy_excel", "status": "failed", "error": str(err)})
 
     if not html_hint:
         df, encoding, _html_err = _parse_html_xls_bytes(raw, attempts)
         if df is not None:
+            detected_type = detect_report_type(df)
             info = {
                 "encoding": encoding,
+                "declared_charset": declared_charset,
                 "delimiter": None,
                 "header_row_index": None,
                 "attempts": attempts,
                 "html_hint": False,
+                "columns_preview": [str(c) for c in list(df.columns)[:12]],
+                "detected_report_type": detected_type,
+                "detected_report_type_raw": detected_type,
             }
             return df, info, None
 
     return (
         None,
-        {"attempts": attempts, "html_hint": html_hint},
+        {"attempts": attempts, "html_hint": html_hint, "declared_charset": declared_charset},
         (
             "Не удалось разобрать XLS-файл ни как legacy Excel, ни как HTML-экспорт. "
             "Проверьте экспорт из R-Keeper и попробуйте выгрузить файл повторно."

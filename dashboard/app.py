@@ -51,7 +51,8 @@ def show_diagnostics(
     st.write(f"Encoding: `{parse_info.get('encoding')}`")
     st.write(f"Delimiter: `{parse_info.get('delimiter')}`")
     st.write(f"Header row index: `{parse_info.get('header_row_index')}`")
-    st.write(f"Detected report type: `{report_type}`")
+    actual_type = parse_info.get("detected_report_type", report_type)
+    st.write(f"Detected report type: `{actual_type}` (UI tab: `{report_type}`)")
     st.write(f"Shape: `{parsed_df.shape}`")
     st.write("Final columns:")
     st.write(list(parsed_df.columns))
@@ -168,29 +169,47 @@ with tab_upload:
             report_type = detect_report_type(parsed_df, uploaded_file.name)
             mapping = build_mapping(parsed_df, report_type)
 
+            ui_tab = report_type
+            if report_type == "waiters_dishes_sales":
+                ui_tab = "waiters"
+            elif report_type in ["revenue_checks_by_day", "revenue_by_stations_by_day"]:
+                ui_tab = "revenue_by_day"
+            elif report_type == "sales_by_categories":
+                ui_tab = "food_usage"
 
-
-            if report_type in batch_types:
+            if ui_tab in batch_types:
                 st.warning(
-                    f"{uploaded_file.name}: report_type '{report_type}' уже был загружен в этом батче "
-                    f"({batch_types[report_type]}). Последний файл заменит предыдущий."
+                    f"{uploaded_file.name}: report_type '{ui_tab}' (original: {report_type}) уже был загружен в этом батче "
+                    f"({batch_types[ui_tab]}). Последний файл заменит предыдущий."
                 )
-            batch_types[report_type] = uploaded_file.name
+            batch_types[ui_tab] = uploaded_file.name
 
             df_kpi = prepare_kpi_df(parsed_df, mapping, report_type)
-            save_loaded_report(report_type, parsed_df, df_kpi, parse_info, mapping)
-            st.success(f"{uploaded_file.name}: Saved report: {report_type} ({parsed_df.shape[0]}, {parsed_df.shape[1]})")
-            processed_previews.append((uploaded_file.name, report_type, parsed_df))
+            save_loaded_report(ui_tab, parsed_df, df_kpi, parse_info, mapping)
+            st.success(f"{uploaded_file.name}: Saved report: {ui_tab} (detected: {report_type}) ({parsed_df.shape[0]}, {parsed_df.shape[1]})")
+            processed_previews.append((uploaded_file.name, report_type, parsed_df, parse_info))
 
         if processed_previews:
             st.subheader("Preview данных")
-            for file_name, report_type, parsed_df in processed_previews:
+            for file_name, report_type, parsed_df, parse_info in processed_previews:
                 with st.expander(f"{file_name} → {report_type}", expanded=False):
                     preview_df = parsed_df.head(50).copy().where(pd.notna(parsed_df.head(50)), "")
                     if format_money_preview:
                         preview_df = format_money_columns_for_display(preview_df)
                     preview_df = _ensure_unique_preview_columns(preview_df)
                     st.dataframe(preview_df, use_container_width=True)
+
+            st.subheader("Debug parsing info")
+            for file_name, report_type, _parsed_df, parse_info in processed_previews:
+                with st.expander(f"Debug: {file_name} → {report_type}", expanded=False):
+                    st.json(
+                        {
+                            "file_name": file_name,
+                            "report_type": report_type,
+                            "parse_info": parse_info,
+                        },
+                        expanded=False,
+                    )
     else:
         loaded = [k for k in ["waiters", "revenue_by_day", "food_usage"] if k in st.session_state]
         if loaded:
