@@ -32,6 +32,15 @@ SERVICE_ROW_HINTS = [
     "расход блюд",
     "выручка станций по дням",
 ]
+CSV_SERVICE_ROW_HINTS = SERVICE_ROW_HINTS + [
+    "период",
+    "страниц",
+    "page",
+    "форма оплаты",
+    "формы оплаты",
+    "по категориям",
+    "по дням",
+]
 
 
 def _clean_cell(value: Any) -> str:
@@ -47,6 +56,34 @@ def _trim_trailing_blank(row: List[str]) -> List[str]:
 
 def _has_meaningful_cells(row: List[str]) -> bool:
     return any(_clean_cell(c) != "" for c in row)
+
+
+def _is_service_like_csv_row(row: List[str], expected_width: Optional[int] = None) -> bool:
+    rr = _trim_trailing_blank(row)
+    if not _has_meaningful_cells(rr):
+        return True
+
+    joined = normalize_text(" ".join(rr))
+    if any(h in joined for h in CSV_SERVICE_ROW_HINTS):
+        return True
+    if "итого" in joined or "всего" in joined:
+        return True
+
+    non_empty = [_clean_cell(c) for c in rr if _clean_cell(c) != ""]
+    if not non_empty:
+        return True
+
+    numeric_like_count = sum(1 for c in non_empty if _is_numeric_like(c))
+    if len(non_empty) == 1 and numeric_like_count == 0:
+        return True
+    if len(non_empty) <= 2 and numeric_like_count == 0:
+        return True
+
+    if expected_width is not None and len(rr) != expected_width:
+        if len(non_empty) <= 3 and numeric_like_count <= 1:
+            return True
+
+    return False
 
 
 def _is_numeric_like(token: str) -> bool:
@@ -512,11 +549,7 @@ def validate_row_widths(
     sample_rows = []
     for r in rows[data_start_idx:data_start_idx + max_rows]:
         rr = _trim_trailing_blank(r)
-        if not _has_meaningful_cells(rr):
-            continue
-        # Skip obvious service/footer rows to avoid false width alarms.
-        joined = normalize_text(" ".join(rr))
-        if any(h in joined for h in SERVICE_ROW_HINTS):
+        if _is_service_like_csv_row(rr, expected_width=expected_width):
             continue
         sample_rows.append(rr)
 
@@ -669,10 +702,7 @@ def parse_csv_bytes(raw: bytes) -> Tuple[Optional[pd.DataFrame], Dict, Optional[
     total_non_empty_rows = 0
     for row in rows[header_idx + header_span:]:
         row_trim = _trim_trailing_blank(row)
-        if not _has_meaningful_cells(row_trim):
-            continue
-        joined = normalize_text(" ".join(row_trim))
-        if any(h in joined for h in SERVICE_ROW_HINTS):
+        if _is_service_like_csv_row(row_trim, expected_width=len(columns)):
             continue
         total_non_empty_rows += 1
         if len(row_trim) > len(columns):
