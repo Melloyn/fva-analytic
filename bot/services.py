@@ -52,6 +52,16 @@ class MockFile:
         with open(self._path, "rb") as f:
             return f.read()
 
+
+def _is_compatible_report_type(target_type: str, detected_type: str) -> bool:
+    compatible_types = {
+        "waiters": {"waiters", "waiters_dishes_sales"},
+        "revenue_by_day": {"revenue_by_day", "revenue_checks_by_day", "revenue_by_stations_by_day"},
+        "food_usage": {"food_usage", "sales_by_categories"},
+    }
+    return detected_type in compatible_types.get(target_type, {target_type})
+
+
 def _get_kpi_df(target_type: str) -> Optional[pd.DataFrame]:
     if not PROCESSED_DIR.exists():
         return None
@@ -68,7 +78,7 @@ def _get_kpi_df(target_type: str) -> Optional[pd.DataFrame]:
             continue
             
         report_type = detect_report_type(parsed_df)
-        if report_type == target_type:
+        if _is_compatible_report_type(target_type, report_type):
             mapping = build_mapping(parsed_df, report_type)
             df_kpi = prepare_kpi_df(parsed_df, mapping, report_type)
             return df_kpi
