@@ -1,4 +1,6 @@
+import re
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 import streamlit as st
@@ -23,6 +25,29 @@ st.set_page_config(page_title="FVA Analytic", layout="wide")
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 PROCESSED_DIR = BASE_DIR / "data" / "processed"
+MONTHLY_UPLOADS_DIR = BASE_DIR / "data" / "uploads" / "monthly"
+
+MONTH_NAME_TO_NUMBER = {
+    "январ": 1,
+    "феврал": 2,
+    "март": 3,
+    "апрел": 4,
+    "ма": 5,
+    "июн": 6,
+    "июл": 7,
+    "август": 8,
+    "сентябр": 9,
+    "октябр": 10,
+    "ноябр": 11,
+    "декабр": 12,
+}
+
+MONTHLY_REPORT_PATTERNS = [
+    (re.compile(r"официант", re.IGNORECASE), "waiters"),
+    (re.compile(r"по\s*дням", re.IGNORECASE), "revenue_by_day"),
+    (re.compile(r"по\s*категори", re.IGNORECASE), "sales_by_categories"),
+    (re.compile(r"форм[аы]\s*оплат", re.IGNORECASE), "payment_types"),
+]
 
 st.title("FVA Analytic — MVP")
 st.write("Загрузите отчёт R-Keeper/1C в формате CSV, XLSX или XLS.")
@@ -138,6 +163,63 @@ def _ensure_unique_preview_columns(df: pd.DataFrame) -> pd.DataFrame:
     return preview
 
 
+def _detect_monthly_report_type(file_name: str) -> Optional[str]:
+    for pattern, report_type in MONTHLY_REPORT_PATTERNS:
+        if pattern.search(file_name):
+            return report_type
+    return None
+
+
+def _extract_year_from_parsed_df(parsed_df: pd.DataFrame) -> Optional[int]:
+    for column in parsed_df.columns:
+        series = pd.to_datetime(parsed_df[column], errors="coerce", dayfirst=True)
+        valid = series.dropna()
+        if not valid.empty:
+            return int(valid.iloc[0].year)
+    return None
+
+
+def _extract_month_period(file_name: str, parsed_df: pd.DataFrame) -> Optional[str]:
+    lower_name = file_name.lower()
+    year_match = re.search(r"(20\d{2})", lower_name)
+    year = int(year_match.group(1)) if year_match else (_extract_year_from_parsed_df(parsed_df) or pd.Timestamp.now().year)
+
+    month_number = None
+    for month_hint, month_idx in MONTH_NAME_TO_NUMBER.items():
+        if month_hint in lower_name:
+            month_number = month_idx
+            break
+
+    if month_number is None:
+        return None
+    return f"{year:04d}-{month_number:02d}"
+
+
+def _build_monthly_upload_path(file_name: str, parsed_df: pd.DataFrame) -> Optional[Path]:
+    report_type = _detect_monthly_report_type(file_name)
+    if not report_type:
+        return None
+
+    month_period = _extract_month_period(file_name, parsed_df)
+    if not month_period:
+        return None
+
+    return MONTHLY_UPLOADS_DIR / report_type / f"{report_type}_{month_period}.csv"
+
+
+def save_monthly_csv_upload(uploaded_file, parsed_df: pd.DataFrame) -> Optional[Path]:
+    if not uploaded_file.name.lower().endswith(".csv"):
+        return None
+
+    target_path = _build_monthly_upload_path(uploaded_file.name, parsed_df)
+    if target_path is None:
+        return None
+
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_bytes(uploaded_file.getvalue())
+    return target_path
+
+
 
 tab_upload, tab_waiters, tab_revenue, tab_food, tab_diag = st.tabs(
     ["Upload & Preview", "Waiters", "Revenue by day", "Food usage", "Diagnostics"]
@@ -190,8 +272,11 @@ with tab_upload:
             batch_types[ui_tab] = uploaded_file.name
 
             df_kpi = prepare_kpi_df(parsed_df, mapping, report_type)
+            monthly_upload_path = save_monthly_csv_upload(uploaded_file, parsed_df)
             save_loaded_report(ui_tab, parsed_df, df_kpi, parse_info, mapping)
             st.success(f"{uploaded_file.name}: Saved report: {ui_tab} (detected: {report_type}) ({parsed_df.shape[0]}, {parsed_df.shape[1]})")
+            if monthly_upload_path is not None:
+                st.info(f"{uploaded_file.name}: monthly CSV saved as {monthly_upload_path.relative_to(BASE_DIR)}")
             processed_previews.append((uploaded_file.name, report_type, parsed_df, parse_info))
 
         if processed_previews:
