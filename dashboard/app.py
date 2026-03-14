@@ -21,6 +21,9 @@ from backend.utils.normalize import normalize_number_series
 
 st.set_page_config(page_title="FVA Analytic", layout="wide")
 
+BASE_DIR = Path(__file__).resolve().parents[1]
+PROCESSED_DIR = BASE_DIR / "data" / "processed"
+
 st.title("FVA Analytic — MVP")
 st.write("Загрузите отчёт R-Keeper/1C в формате CSV, XLSX или XLS.")
 
@@ -103,6 +106,9 @@ def save_loaded_report(report_type: str, parsed_df: pd.DataFrame, df_kpi: pd.Dat
         "parse_info": parse_info,
         "mapping": mapping,
     }
+    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+    target_path = PROCESSED_DIR / f"{report_type}_clean.csv"
+    df_kpi.to_csv(target_path, index=False, encoding="utf-8-sig")
 
 
 def get_loaded_report(report_type: str):
@@ -151,9 +157,8 @@ with tab_upload:
 
         for uploaded_file in uploaded_files:
             if is_kitchen_bar_section_report_filename(uploaded_file.name):
-                processed_dir = Path(__file__).resolve().parents[1] / "data" / "processed"
-                processed_dir.mkdir(parents=True, exist_ok=True)
-                target_path = processed_dir / "kitchen_bar_by_station.csv"
+                PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+                target_path = PROCESSED_DIR / "kitchen_bar_by_station.csv"
                 target_path.write_bytes(uploaded_file.getvalue())
                 st.success(
                     f"{uploaded_file.name}: сохранен как kitchen_bar_by_station.csv "
